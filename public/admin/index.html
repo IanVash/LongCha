@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Panel interno</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body data-page="admin">
+    <div class="admin-layout">
+      <aside class="admin-sidebar">
+        <a class="brand-lockup" href="/admin">
+          <img src="/api/public/art/logo.svg" alt="Logo">
+          <div>
+            <strong id="adminBusinessName">Boba Central</strong>
+            <span id="adminUserRole">Panel</span>
+          </div>
+        </a>
+        <nav class="admin-nav" id="adminNav">
+          <a href="/admin" data-section="dashboard">Dashboard</a>
+          <a href="/admin/orders" data-section="orders">Pedidos</a>
+          <a href="/admin/kds" data-section="kds">Cocina/KDS</a>
+          <a href="/admin/products" data-section="products">Productos</a>
+          <a href="/admin/categories" data-section="categories">Categorias</a>
+          <a href="/admin/reports" data-section="reports">Reportes</a>
+          <a href="/admin/settings" data-section="settings">Configuracion</a>
+          <a href="/admin/audit" data-section="audit">Auditoria</a>
+          <a href="/admin/users" data-section="users">Usuarios</a>
+        </nav>
+      </aside>
+
+      <main class="admin-main">
+        <header class="admin-topbar">
+          <div>
+            <strong id="sectionTitle">Dashboard</strong>
+            <div class="muted" id="sectionSubtitle">Operacion del dia</div>
+          </div>
+          <div class="nav-actions">
+            <a class="btn btn--soft" href="/menu" target="_blank" rel="noreferrer">Menu QR</a>
+            <button class="btn btn--ghost" type="button" id="logoutBtn">Salir</button>
+          </div>
+        </header>
+
+        <section class="admin-section" id="dashboardSection"></section>
+        <section class="admin-section" id="ordersSection"></section>
+        <section class="admin-section" id="kdsSection"></section>
+        <section class="admin-section" id="productsSection"></section>
+        <section class="admin-section" id="categoriesSection"></section>
+        <section class="admin-section" id="reportsSection"></section>
+        <section class="admin-section" id="settingsSection"></section>
+        <section class="admin-section" id="auditSection"></section>
+        <section class="admin-section" id="usersSection"></section>
+      </main>
+    </div>
+    <div id="ticketPrint"></div>
+    <div class="toast" id="toast"></div>
+    <script src="/admin.js" type="module"></script>
+  </body>
+</html>

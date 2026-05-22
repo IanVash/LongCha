@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Menu QR</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body data-page="menu">
+    <header class="public-header">
+      <div class="shell public-header__inner">
+        <a class="brand-lockup" href="/">
+          <img data-business-logo src="/api/public/art/logo.svg" alt="Logo">
+          <div>
+            <strong data-business-name>Menu</strong>
+            <span data-open-state>Consultando horario</span>
+          </div>
+        </a>
+        <nav class="nav-actions">
+          <a class="btn btn--ghost" href="/status">Estado</a>
+          <button class="btn btn--soft" type="button" data-open-cart>Carrito</button>
+        </nav>
+      </div>
+    </header>
+
+    <section class="menu-toolbar">
+      <div class="shell">
+        <div class="search-row">
+          <input class="field" id="productSearch" type="search" placeholder="Buscar milk tea, cafe, combos...">
+          <a class="btn btn--brand" href="/checkout">Confirmar pedido</a>
+        </div>
+        <div class="chips" id="categoryChips"></div>
+      </div>
+    </section>
+
+    <main class="shell">
+      <section id="featuredSection">
+        <div class="section-title">
+          <h2>Destacados</h2>
+          <span class="muted">Favoritos de la casa</span>
+        </div>
+        <div class="product-grid" id="featuredProducts"></div>
+      </section>
+      <section>
+        <div class="section-title">
+          <h2>Menu</h2>
+          <span class="muted" id="productCount"></span>
+        </div>
+        <div class="product-grid" id="productGrid"></div>
+      </section>
+    </main>
+
+    <div class="cart-bar" id="cartBar" hidden>
+      <div><strong id="cartBarCount">0 productos</strong><br><span id="cartBarTotal">$0.00</span></div>
+      <button class="btn btn--brand" type="button" data-open-cart>Ver carrito</button>
+    </div>
+
+    <dialog class="dialog" id="productDialog"></dialog>
+    <dialog class="dialog" id="cartDialog"></dialog>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Confirmar pedido</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body data-page="checkout">
+    <header class="public-header">
+      <div class="shell public-header__inner">
+        <a class="brand-lockup" href="/menu">
+          <img data-business-logo src="/api/public/art/logo.svg" alt="Logo">
+          <div>
+            <strong data-business-name>Confirmar pedido</strong>
+            <span>Revisa tu carrito</span>
+          </div>
+        </a>
+        <nav class="nav-actions">
+          <a class="btn btn--ghost" href="/menu">Menu</a>
+          <a class="btn btn--soft" href="/status">Estado</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="shell page-grid">
+      <section class="panel">
+        <h2>Datos del pedido</h2>
+        <form id="checkoutForm" class="form-grid" style="margin-top:14px">
+          <label>Nombre<input class="field" name="name" required autocomplete="name"></label>
+          <label>Telefono<input class="field" name="phone" required autocomplete="tel"></label>
+          <label>Entrega<select class="select" name="deliveryMethodId" id="deliveryMethod" required></select></label>
+          <label>Pago<select class="select" name="paymentMethodId" id="paymentMethod" required></select></label>
+          <label class="wide" id="zoneWrap" hidden>Zona de delivery<select class="select" name="deliveryZoneId" id="deliveryZone"></select></label>
+          <label class="wide" id="addressWrap" hidden>Direccion<textarea class="textarea" name="address" autocomplete="street-address"></textarea></label>
+          <label class="wide" id="referenceWrap" hidden>Referencia<textarea class="textarea" name="reference"></textarea></label>
+          <label class="wide">Notas generales<textarea class="textarea" name="notes"></textarea></label>
+          <div class="wide nav-actions" style="justify-content:flex-start">
+            <button class="btn btn--brand" type="submit">Enviar pedido</button>
+            <a class="btn btn--ghost" href="/menu">Seguir comprando</a>
+          </div>
+        </form>
+        <div id="orderSuccess" hidden></div>
+      </section>
+
+      <aside class="panel">
+        <h2>Resumen</h2>
+        <div class="cart-lines" id="checkoutCart" style="margin-top:14px"></div>
+        <div class="price-row" style="margin-top:14px"><strong>Subtotal</strong><strong id="checkoutSubtotal">$0.00</strong></div>
+        <div class="price-row"><span>Delivery</span><span id="checkoutDelivery">$0.00</span></div>
+        <div class="price-row"><strong>Total</strong><strong id="checkoutTotal">$0.00</strong></div>
+      </aside>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

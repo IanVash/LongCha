@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Estado del pedido</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body data-page="status">
+    <header class="public-header">
+      <div class="shell public-header__inner">
+        <a class="brand-lockup" href="/menu">
+          <img src="/api/public/art/logo.svg" alt="Logo">
+          <div>
+            <strong>Estado del pedido</strong>
+            <span>Consulta tu orden</span>
+          </div>
+        </a>
+        <nav class="nav-actions">
+          <a class="btn btn--ghost" href="/menu">Menu</a>
+          <a class="btn btn--soft" href="/">Inicio</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="shell page-grid">
+      <section class="panel">
+        <h2>Buscar pedido</h2>
+        <form id="statusForm" class="search-row" style="margin-top:14px">
+          <input class="field" id="orderNumber" placeholder="Ej. BC260521-0001" required>
+          <button class="btn btn--brand" type="submit">Consultar</button>
+        </form>
+        <div id="statusResult" style="margin-top:18px"></div>
+      </section>
+      <aside class="panel">
+        <h2>Progreso</h2>
+        <div class="timeline" id="statusTimeline"></div>
+      </aside>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

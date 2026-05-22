@@ -1,0 +1,13 @@
+{
+  "name": "qr-food-pos-mvp",
+  "version": "1.0.0",
+  "description": "MVP web para menu QR, pedidos en linea, panel interno y administracion de restaurante/cafeteria.",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}

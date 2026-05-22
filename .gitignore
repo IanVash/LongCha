@@ -1,0 +1,9 @@
+node_modules/
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+data/backups/
+data/uploads/
+.env
+server.out.log
+server.err.log
