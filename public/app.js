@@ -40,7 +40,10 @@ function saveCart(cart) {
 
 function lineTotalCents(item) {
   const extras = (item.extrasData || []).reduce((sum, extra) => sum + Number(extra.priceCents || 0), 0);
-  return (Number(item.basePriceCents || 0) + extras) * Number(item.quantity || 1);
+  const options = (item.optionSelections || [])
+    .flatMap((selection) => selection.options || [])
+    .reduce((sum, option) => sum + Number(option.priceCents || 0), 0);
+  return (Number(item.basePriceCents || 0) + extras + options) * Number(item.quantity || 1);
 }
 
 function cartTotalCents(cart = getCart()) {
@@ -177,6 +180,14 @@ function openProductDialog(product) {
           </select>
         </label>
       `).join('')}
+      ${product.optionalGroups?.length ? `
+        <div>
+          <strong>Opcionales</strong>
+          <div class="option-list">
+            ${product.optionalGroups.map((group) => optionalGroupControl(group)).join('')}
+          </div>
+        </div>
+      ` : ''}
       ${product.extras.length ? `
         <div>
           <strong>Extras</strong>
@@ -208,6 +219,12 @@ function openProductDialog(product) {
     }
     const extraIds = form.getAll('extra').map(Number);
     const selectedExtras = product.extras.filter((extra) => extraIds.includes(extra.id));
+    const optionSelections = collectOptionSelections(product, form);
+    const optionError = validateOptionSelections(product, optionSelections);
+    if (optionError) {
+      alert(optionError);
+      return;
+    }
     const cart = getCart();
     cart.push({
       cartId: crypto.randomUUID(),
@@ -219,6 +236,7 @@ function openProductDialog(product) {
       variants,
       extras: extraIds,
       extrasData: selectedExtras,
+      optionSelections,
       notes: String(form.get('notes') || '').trim()
     });
     saveCart(cart);
@@ -228,15 +246,61 @@ function openProductDialog(product) {
   dialog.showModal();
 }
 
+function optionalGroupControl(group) {
+  const inputType = group.maxSelect === 1 ? 'radio' : 'checkbox';
+  return `
+    <fieldset style="border:1px solid var(--line);border-radius:8px;padding:10px;margin:0">
+      <legend><strong>${escapeHtml(group.name)}</strong>${group.required ? ' *' : ''}</legend>
+      ${group.options.map((option) => `
+        <label>
+          <input type="${inputType}" name="optional:${group.id}" value="${option.id}" ${group.required && inputType === 'radio' ? 'required' : ''}>
+          <span>${escapeHtml(option.name)}${option.priceCents ? ` +${money(option.priceCents)}` : ''}</span>
+        </label>
+      `).join('')}
+      ${group.maxSelect > 1 ? `<div class="muted">Maximo ${group.maxSelect} opciones</div>` : ''}
+    </fieldset>
+  `;
+}
+
+function collectOptionSelections(product, form) {
+  return (product.optionalGroups || []).map((group) => {
+    const optionIds = form.getAll(`optional:${group.id}`).map(Number);
+    const options = group.options.filter((option) => optionIds.includes(option.id));
+    return {
+      groupId: group.id,
+      groupName: group.name,
+      required: group.required,
+      maxSelect: group.maxSelect,
+      optionIds,
+      options
+    };
+  }).filter((selection) => selection.optionIds.length || selection.required);
+}
+
+function validateOptionSelections(product, selections) {
+  const byGroup = new Map(selections.map((selection) => [selection.groupId, selection]));
+  for (const group of product.optionalGroups || []) {
+    const selection = byGroup.get(group.id);
+    const total = selection?.optionIds.length || 0;
+    if (group.required && total === 0) return `Selecciona al menos una opcion para ${group.name}.`;
+    if (group.maxSelect > 0 && total > group.maxSelect) return `${group.name} permite maximo ${group.maxSelect} opcion(es).`;
+  }
+  return '';
+}
+
 function cartLine(item) {
   const variants = Object.entries(item.variants || {}).map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(value)}`).join(', ');
   const extras = (item.extrasData || []).map((extra) => `${escapeHtml(extra.name)} +${money(extra.priceCents)}`).join(', ');
+  const optionText = (item.optionSelections || [])
+    .flatMap((selection) => (selection.options || []).map((option) => `${escapeHtml(selection.groupName)}: ${escapeHtml(option.name)}${option.priceCents ? ` +${money(option.priceCents)}` : ''}`))
+    .join(', ');
   return `
     <div class="cart-line">
       <img src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}">
       <div>
         <strong>${item.quantity}x ${escapeHtml(item.name)}</strong>
         ${variants ? `<div class="muted">${variants}</div>` : ''}
+        ${optionText ? `<div class="muted">${optionText}</div>` : ''}
         ${extras ? `<div class="muted">${extras}</div>` : ''}
         ${item.notes ? `<div class="muted">${escapeHtml(item.notes)}</div>` : ''}
       </div>
@@ -343,6 +407,7 @@ async function initCheckout() {
         quantity: item.quantity,
         variants: item.variants,
         extras: item.extras,
+        optionSelections: item.optionSelections,
         notes: item.notes
       }))
     };
