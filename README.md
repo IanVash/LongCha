@@ -7,11 +7,18 @@ Incluye:
 - Menu QR publico responsive.
 - Carrito, personalizacion de productos y checkout sin cuenta.
 - Envio de pedido con numero automatico, total e historial de estados.
-- Confirmacion por WhatsApp con mensaje prellenado.
+- Confirmacion por WhatsApp con mensaje prellenado y actualizaciones de estado opcionales por WhatsApp Cloud API.
 - Panel interno con login, pedidos, KDS/cocina, cambio de estados e impresion de ticket.
+- Actualizacion en tiempo real de pedidos y estado del cliente con Server-Sent Events.
 - Administracion de productos, precios, imagenes, categorias, disponibilidad y variantes.
+- Configuracion dinamica de categorias, extras/toppings y variantes desde el panel.
+- Inventario basico con stock, alertas de bajo inventario y agotado automatico.
+- Promociones/cupones con compra minima, descuento fijo o porcentaje.
+- Delivery configurable con zonas, costo, pedido minimo y asignacion de repartidor.
+- QR por mesa, tiempos estimados por metodo de entrega y estado visible para el cliente.
+- Control de estado de pago y referencia de pago por pedido.
 - Usuarios, roles y permisos basicos.
-- Reportes de ventas, productos mas vendidos, metodos de pago y entrega.
+- Reportes de ventas, productos mas vendidos, metodos de pago, entrega, categorias, horas y cajeros.
 - Codigo QR local para enlazar el menu.
 - Controles pre-produccion: HTTPS opcional, rotacion de sesiones, rate limiting, auditoria, backups y subida validada de imagenes.
 
@@ -48,6 +55,7 @@ Credenciales demo:
 - Administrador: `admin@demo.com` / `Admin123!`
 - Caja: `caja@demo.com` / `Caja123!`
 - Cocina: `cocina@demo.com` / `Cocina123!`
+- Repartidor: `delivery@demo.com` / `Delivery123!`
 
 ## Variables de entorno
 
@@ -74,9 +82,18 @@ IMAGE_UPLOAD_DIR=./data/uploads
 MAX_IMAGE_BYTES=2097152
 BACKUP_DIR=./data/backups
 BACKUP_INTERVAL_HOURS=24
+WHATSAPP_AUTO_STATUS_UPDATES=false
+WHATSAPP_NOTIFY_STATUSES=Aceptado,Listo
+WHATSAPP_DEFAULT_COUNTRY_CODE=503
+WHATSAPP_CLOUD_TOKEN=
+WHATSAPP_PHONE_NUMBER_ID=
+WHATSAPP_GRAPH_API_VERSION=v23.0
+WHATSAPP_GRAPH_BASE_URL=https://graph.facebook.com
 ```
 
 La base SQLite se crea automaticamente en `data/restaurant_mvp.sqlite`.
+
+Para enviar cambios de estado por WhatsApp automaticamente, activa `WHATSAPP_AUTO_STATUS_UPDATES=true` y configura `WHATSAPP_CLOUD_TOKEN` y `WHATSAPP_PHONE_NUMBER_ID`. Por defecto solo envia mensajes en `Aceptado` y `Listo`; puedes cambiarlo en `WHATSAPP_NOTIFY_STATUSES`. Si no hay credenciales, el panel mantiene el boton manual `Enviar WhatsApp` con el mensaje prellenado.
 
 ## Modelo de base de datos
 
@@ -84,12 +101,13 @@ Tablas principales:
 
 - `roles`, `users`, `sessions`
 - `business`, `settings`
+- `branches`
 - `categories`, `products`, `product_variants`
-- `extras`, `product_extras`
+- `extras`, `product_extras`, `optional_groups`, `optional_options`
 - `payment_methods`, `delivery_methods`, `delivery_zones`
 - `customers`, `orders`, `order_items`, `order_status_history`
 - `promotions`
-- `audit_logs`
+- `audit_logs`, `notification_logs`
 
 Cada pedido guarda:
 
@@ -98,6 +116,7 @@ Cada pedido guarda:
 - Zona y costo de delivery.
 - Productos, variantes, extras y notas.
 - Subtotal, delivery y total.
+- Descuento, cupon, mesa y estado de pago.
 - Estado actual.
 - Historial completo de estados.
 
@@ -106,10 +125,12 @@ Cada pedido guarda:
 1. Cliente escanea QR o entra a `/menu`.
 2. Filtra productos, personaliza variantes y extras.
 3. Agrega al carrito y confirma en `/checkout`.
-4. El backend valida disponibilidad, recalcula precios y crea el pedido.
+4. El backend valida disponibilidad, inventario, cupones, horarios, delivery y recalcula precios.
 5. El panel interno muestra el pedido como `Nuevo`.
 6. Caja/cocina cambian estado: `Aceptado`, `En preparacion`, `Listo`, `En camino`, `Entregado` o `Cancelado`.
-7. Cliente consulta el avance en `/status`.
+7. Caja puede marcar pago, asignar repartidor e imprimir ticket.
+8. El panel interno, KDS y la pagina `/status` reciben el cambio en tiempo real sin refrescar.
+9. Si WhatsApp Cloud API esta configurado, el cliente recibe mensaje automatico para los estados definidos.
 
 ## Despliegue sugerido
 
@@ -166,9 +187,22 @@ Imagenes:
 - El servidor acepta PNG, JPG y WebP hasta `MAX_IMAGE_BYTES`.
 - Las imagenes quedan en `IMAGE_UPLOAD_DIR` y se sirven desde `/uploads/images/...`.
 
+Catalogo:
+
+- `Panel > Productos` permite editar categoria, precio, imagen, disponibilidad, extras asociados y variantes visuales.
+- `Panel > Categorias` permite crear, ordenar, activar/desactivar y eliminar categorias.
+- `Panel > Extras` permite crear toppings/agregados, cambiar precio, activar/desactivar y eliminarlos.
+- `Panel > Opcionales` maneja grupos como Leche, Toppings, Boba o Extras, con reglas de requerido, maximo seleccionable, opciones con precio y vinculos a productos.
+- `Panel > Inventario` permite activar stock, ajustar cantidades, definir alerta baja y cambiar disponibilidad.
+- `Panel > Promociones` permite crear cupones como `LONGCHA10`, fijar fechas, descuento y compra minima.
+- `Panel > Delivery` permite activar metodos, configurar zonas y ver repartidores disponibles.
+- `Panel > Usuarios` permite crear/editar usuarios y ajustar permisos por rol.
+- `Panel > Configuracion` incluye QR por mesa, horarios, cierres temporales y tiempos estimados.
+
 Auditoria:
 
 - Ver eventos en `Panel > Auditoria`.
 - La tabla registra usuario, accion, entidad, IP, navegador y detalles.
+- Tambien muestra backups disponibles para descarga y logs de notificaciones.
 
 Antes de produccion real, agrega backups externos, rotacion de secretos, monitoreo, logs centralizados y pruebas de restauracion.

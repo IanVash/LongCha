@@ -12,21 +12,41 @@
         <a class="brand-lockup" href="/admin">
           <img src="/api/public/art/logo.svg" alt="Logo">
           <div>
-            <strong id="adminBusinessName">Boba Central</strong>
+            <strong id="adminBusinessName">Long Cha</strong>
             <span id="adminUserRole">Panel</span>
           </div>
         </a>
+        <div class="sidebar-status" id="businessStatus">
+          <span></span>
+          <div>
+            <strong>Verificando</strong>
+            <small>Estado del negocio</small>
+          </div>
+        </div>
         <nav class="admin-nav" id="adminNav">
-          <a href="/admin" data-section="dashboard">Dashboard</a>
-          <a href="/admin/orders" data-section="orders">Pedidos</a>
-          <a href="/admin/kds" data-section="kds">Cocina/KDS</a>
-          <a href="/admin/products" data-section="products">Productos</a>
-          <a href="/admin/categories" data-section="categories">Categorias</a>
-          <a href="/admin/extras" data-section="extras">Opcionales</a>
-          <a href="/admin/reports" data-section="reports">Reportes</a>
-          <a href="/admin/settings" data-section="settings">Configuracion</a>
-          <a href="/admin/audit" data-section="audit">Auditoria</a>
-          <a href="/admin/users" data-section="users">Usuarios</a>
+          <div class="nav-group">
+            <span>Operacion</span>
+            <a href="/admin" data-section="dashboard" data-icon="DB">Dashboard</a>
+            <a href="/admin/orders" data-section="orders" data-icon="PD">Pedidos</a>
+            <a href="/admin/kds" data-section="kds" data-icon="K">Cocina/KDS</a>
+            <a href="/admin/delivery" data-section="delivery" data-icon="DV">Delivery</a>
+          </div>
+          <div class="nav-group">
+            <span>Catalogo</span>
+            <a href="/admin/products" data-section="products" data-icon="PR">Productos</a>
+            <a href="/admin/categories" data-section="categories" data-icon="CT">Categorias</a>
+            <a href="/admin/extras" data-section="extras" data-icon="EX">Opcionales</a>
+            <a href="/admin/inventory" data-section="inventory" data-icon="ST">Inventario</a>
+            <a href="/admin/promotions" data-section="promotions" data-icon="%">Promociones</a>
+          </div>
+          <div class="nav-group">
+            <span>Administracion</span>
+            <a href="/admin/reports" data-section="reports" data-icon="RP">Reportes</a>
+            <a href="/admin/accounting" data-section="accounting" data-icon="$">Contabilidad</a>
+            <a href="/admin/settings" data-section="settings" data-icon="QR">Configuracion</a>
+            <a href="/admin/audit" data-section="audit" data-icon="AU">Auditoria</a>
+            <a href="/admin/users" data-section="users" data-icon="US">Usuarios</a>
+          </div>
         </nav>
       </aside>
 
@@ -48,7 +68,11 @@
         <section class="admin-section" id="productsSection"></section>
         <section class="admin-section" id="categoriesSection"></section>
         <section class="admin-section" id="extrasSection"></section>
+        <section class="admin-section" id="inventorySection"></section>
+        <section class="admin-section" id="promotionsSection"></section>
+        <section class="admin-section" id="deliverySection"></section>
         <section class="admin-section" id="reportsSection"></section>
+        <section class="admin-section" id="accountingSection"></section>
         <section class="admin-section" id="settingsSection"></section>
         <section class="admin-section" id="auditSection"></section>
         <section class="admin-section" id="usersSection"></section>

@@ -10,14 +10,22 @@ import {
   createSession,
   db,
   databasePath,
+  deleteAccountingEntry,
   deleteCategory,
+  deleteExtra,
+  deleteInventoryItem,
+  deleteOptionalGroup,
+  deleteOptionalOption,
   deleteProduct,
   deleteSession,
   formatOrderForWhatsApp,
   getAdminCatalog,
+  getAccounting,
   getBusiness,
   getCheckoutOptions,
+  getInventoryAdmin,
   getMenu,
+  getDeliveryAdmin,
   getOrderById,
   getOrderByNumber,
   getReports,
@@ -25,22 +33,53 @@ import {
   getUserBySession,
   initDatabase,
   listAuditLogs,
+  listBranches,
   listCategories,
+  listExtras,
+  listNotificationLogs,
+  listOptionalGroups,
   listOrders,
+  listPromotions,
   listRoles,
   listUsers,
   login,
+  notificationLog,
+  saveCashClosing,
   saveCategory,
+  saveAccountingEntry,
+  saveDeliveryZone,
+  saveExtra,
+  saveInventoryItem,
+  saveOptionalGroup,
+  saveOptionalOption,
   saveProduct,
+  savePromotion,
+  saveSupplierPurchase,
   saveUser,
+  saveWasteLog,
   updateBusiness,
   updateCategory,
+  updateDeliveryMethod,
+  updateDeliveryZone,
+  updateExtra,
+  updateInventoryItem,
+  updateOptionalGroup,
+  updateOptionalOption,
+  updateOrderAssignment,
+  updateOrderPayment,
   updateOrderStatus,
   updateProduct,
+  updateProductInventory,
+  updateProductRecipe,
+  updatePromotion,
+  updateRole,
+  updateUser,
+  deletePromotion,
   rotateSession,
   userCan
 } from './db.js';
 import { qrSvg } from './qr.js';
+import { sendWhatsAppStatus, whatsappStatusUrl } from './whatsapp.js';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const publicDir = path.join(rootDir, 'public');
@@ -80,6 +119,9 @@ const mimeTypes = {
   '.ico': 'image/x-icon'
 };
 
+const adminEventClients = new Set();
+const orderEventClients = new Map();
+
 function loadEnv() {
   const envPath = path.join(rootDir, '.env');
   if (!existsSync(envPath)) return;
@@ -106,6 +148,98 @@ function send(res, status, body, headers = {}) {
 
 function json(res, status, payload, headers = {}) {
   send(res, status, JSON.stringify(payload), { 'Content-Type': 'application/json; charset=utf-8', ...headers });
+}
+
+function sseHeaders(res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.write(': conectado\n\n');
+}
+
+function writeSse(res, event, payload) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function closeSseClient(collection, res) {
+  collection.delete(res);
+  try {
+    res.end();
+  } catch {
+    /* cliente cerrado */
+  }
+}
+
+function addAdminEventClient(req, res, user) {
+  sseHeaders(res);
+  adminEventClients.add(res);
+  writeSse(res, 'orders.snapshot', {
+    orders: listOrders({ limit: 80 }).map(withAdminOrderLinks),
+    userId: user.id
+  });
+  const heartbeat = setInterval(() => {
+    if (!res.destroyed) res.write(': ping\n\n');
+  }, 25000);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    closeSseClient(adminEventClients, res);
+  });
+}
+
+function addOrderEventClient(req, res, order) {
+  sseHeaders(res);
+  const orderNumber = order.orderNumber;
+  if (!orderEventClients.has(orderNumber)) orderEventClients.set(orderNumber, new Set());
+  const clients = orderEventClients.get(orderNumber);
+  clients.add(res);
+  writeSse(res, 'order.snapshot', { order: cleanOrderForPublic(order) });
+  const heartbeat = setInterval(() => {
+    if (!res.destroyed) res.write(': ping\n\n');
+  }, 25000);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    clients.delete(res);
+    if (!clients.size) orderEventClients.delete(orderNumber);
+    try {
+      res.end();
+    } catch {
+      /* cliente cerrado */
+    }
+  });
+}
+
+function broadcastAdminOrder(event, order) {
+  const payload = { order: withAdminOrderLinks(order) };
+  for (const client of [...adminEventClients]) {
+    if (client.destroyed) {
+      adminEventClients.delete(client);
+    } else {
+      writeSse(client, event, payload);
+    }
+  }
+}
+
+function broadcastPublicOrder(event, order) {
+  const clients = orderEventClients.get(order.orderNumber);
+  if (!clients?.size) return;
+  const payload = { order: cleanOrderForPublic(order) };
+  for (const client of [...clients]) {
+    if (client.destroyed) {
+      clients.delete(client);
+    } else {
+      writeSse(client, event, payload);
+    }
+  }
+  if (!clients.size) orderEventClients.delete(order.orderNumber);
+}
+
+function emitOrderEvent(event, order) {
+  broadcastAdminOrder(event, order);
+  broadcastPublicOrder(event, order);
 }
 
 function parseCookies(header = '') {
@@ -407,9 +541,23 @@ function canChangeStatus(user, status) {
 
 function cleanOrderForPublic(order) {
   if (!order) return null;
+  const business = getBusiness();
+  const etaMinutes = order.deliveryMethod.slug === 'delivery'
+    ? business.prepDeliveryMinutes
+    : order.deliveryMethod.slug === 'comer-en-local'
+      ? business.prepDineinMinutes
+      : business.prepPickupMinutes;
+  const whatsappPhone = business.whatsappPhone.replace(/\D/g, '');
+  const whatsappMessage = formatOrderForWhatsApp(order);
   return {
     orderNumber: order.orderNumber,
     status: order.status,
+    etaMinutes,
+    whatsappUrl: whatsappPhone ? `https://wa.me/${whatsappPhone}?text=${encodeURIComponent(whatsappMessage)}` : '',
+    tableLabel: order.tableLabel,
+    paymentStatus: order.paymentStatus,
+    discountCents: order.discountCents,
+    couponCode: order.couponCode,
     total: order.total,
     totalCents: order.totalCents,
     deliveryMethod: order.deliveryMethod,
@@ -428,6 +576,57 @@ function cleanOrderForPublic(order) {
       lineTotal: item.lineTotal
     }))
   };
+}
+
+function withAdminOrderLinks(order) {
+  if (!order) return order;
+  const business = getBusiness();
+  const etaMinutes = order.deliveryMethod.slug === 'delivery'
+    ? business.prepDeliveryMinutes
+    : order.deliveryMethod.slug === 'comer-en-local'
+      ? business.prepDineinMinutes
+      : business.prepPickupMinutes;
+  return {
+    ...order,
+    etaMinutes,
+    whatsappStatusUrl: whatsappStatusUrl(order, getBusiness())
+  };
+}
+
+function queueWhatsAppStatusNotification(req, order, userId) {
+  const business = getBusiness();
+  sendWhatsAppStatus(order, business)
+    .then((result) => {
+      if (result.skipped) return;
+      audit(
+        req,
+        result.sent ? 'notifications.whatsapp_status_sent' : 'notifications.whatsapp_status_failed',
+        'order',
+        order.id,
+        { orderNumber: order.orderNumber, status: order.status, reason: result.reason || '' },
+        userId
+      );
+      if (!result.sent) {
+        console.warn('WhatsApp status notification failed:', result.reason);
+      }
+      notificationLog({
+        orderId: order.id,
+        channel: 'whatsapp',
+        recipient: order.customer.phone,
+        template: `status.${order.status}`,
+        status: result.sent ? 'sent' : 'failed',
+        message: result.reason || '',
+        response: result.response || {}
+      });
+    })
+    .catch((error) => {
+      audit(req, 'notifications.whatsapp_status_failed', 'order', order.id, {
+        orderNumber: order.orderNumber,
+        status: order.status,
+        reason: error.message
+      }, userId);
+      console.warn('WhatsApp status notification failed:', error.message);
+    });
 }
 
 async function handleApi(req, res, url) {
@@ -454,6 +653,12 @@ async function handleApi(req, res, url) {
     return json(res, 200, cleanOrderForPublic(order));
   }
 
+  if (req.method === 'GET' && pathname === '/api/public/order-events') {
+    const order = getOrderByNumber(searchParams.get('order') || '');
+    if (!order) throw new ValidationError('Pedido no encontrado.', 404);
+    return addOrderEventClient(req, res, order);
+  }
+
   if (req.method === 'GET' && pathname.startsWith('/api/public/art/')) {
     const slug = path.basename(pathname).replace(/\.svg$/i, '');
     return send(res, 200, productArtSvg(slug), {
@@ -473,6 +678,7 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && pathname === '/api/orders') {
     const order = createOrder(await readJson(req));
     audit(req, 'orders.created_public', 'order', order.id, { orderNumber: order.orderNumber, totalCents: order.totalCents });
+    emitOrderEvent('order.created', order);
     const business = getBusiness();
     const message = formatOrderForWhatsApp(order);
     const phone = business.whatsappPhone.replace(/\D/g, '');
@@ -521,17 +727,23 @@ async function handleAdminApi(req, res, url) {
   const { pathname, searchParams } = url;
   const user = requireAuth(req, res);
 
+  if (req.method === 'GET' && pathname === '/api/admin/events') {
+    if (!userCan(user, 'orders:view') && !userCan(user, 'orders:kds') && !userCan(user, 'orders:view-assigned')) {
+      throw new ValidationError('No tienes permisos para ver pedidos.', 403);
+    }
+    return addAdminEventClient(req, res, user);
+  }
+
   if (req.method === 'GET' && pathname === '/api/admin/orders') {
     if (!userCan(user, 'orders:view') && !userCan(user, 'orders:kds') && !userCan(user, 'orders:view-assigned')) {
       throw new ValidationError('No tienes permisos para ver pedidos.', 403);
     }
-    return json(res, 200, {
-      orders: listOrders({
+    const orders = listOrders({
         status: searchParams.get('status') || 'all',
         search: searchParams.get('search') || '',
         kds: searchParams.get('kds') === '1'
-      })
-    });
+      }).map(withAdminOrderLinks);
+    return json(res, 200, { orders });
   }
 
   const orderMatch = pathname.match(/^\/api\/admin\/orders\/(\d+)$/);
@@ -539,7 +751,7 @@ async function handleAdminApi(req, res, url) {
     requirePermission(user, 'orders:view');
     const order = getOrderById(Number(orderMatch[1]));
     if (!order) throw new ValidationError('Pedido no encontrado.', 404);
-    return json(res, 200, { order });
+    return json(res, 200, { order: withAdminOrderLinks(order) });
   }
 
   const orderStatusMatch = pathname.match(/^\/api\/admin\/orders\/(\d+)\/status$/);
@@ -548,12 +760,85 @@ async function handleAdminApi(req, res, url) {
     if (!canChangeStatus(user, body.status)) throw new ValidationError('No puedes cambiar a ese estado.', 403);
     const order = updateOrderStatus(Number(orderStatusMatch[1]), body.status, user.id, body.note || '');
     audit(req, 'orders.status_updated', 'order', order.id, { orderNumber: order.orderNumber, status: body.status }, user.id);
-    return json(res, 200, { order });
+    emitOrderEvent('order.updated', order);
+    queueWhatsAppStatusNotification(req, order, user.id);
+    return json(res, 200, {
+      order: withAdminOrderLinks(order),
+      whatsappUrl: whatsappStatusUrl(order, getBusiness())
+    });
+  }
+
+  const orderAssignMatch = pathname.match(/^\/api\/admin\/orders\/(\d+)\/assign$/);
+  if (req.method === 'PATCH' && orderAssignMatch) {
+    requirePermission(user, 'orders:update');
+    const body = await readJson(req);
+    const order = updateOrderAssignment(Number(orderAssignMatch[1]), body.assignedDeliveryUserId);
+    audit(req, 'orders.delivery_assigned', 'order', order.id, { orderNumber: order.orderNumber, driverId: body.assignedDeliveryUserId }, user.id);
+    emitOrderEvent('order.updated', order);
+    return json(res, 200, { order: withAdminOrderLinks(order) });
+  }
+
+  const orderPaymentMatch = pathname.match(/^\/api\/admin\/orders\/(\d+)\/payment$/);
+  if (req.method === 'PATCH' && orderPaymentMatch) {
+    if (!userCan(user, 'payments:update') && !userCan(user, 'orders:update')) requirePermission(user, '*');
+    const order = updateOrderPayment(Number(orderPaymentMatch[1]), await readJson(req));
+    audit(req, 'orders.payment_updated', 'order', order.id, { orderNumber: order.orderNumber, paymentStatus: order.paymentStatus }, user.id);
+    emitOrderEvent('order.updated', order);
+    return json(res, 200, { order: withAdminOrderLinks(order) });
   }
 
   if (req.method === 'GET' && pathname === '/api/admin/catalog') {
     if (!userCan(user, 'catalog:view')) requirePermission(user, '*');
     return json(res, 200, getAdminCatalog());
+  }
+
+  if (req.method === 'GET' && pathname === '/api/admin/inventory') {
+    if (!userCan(user, 'catalog:view')) requirePermission(user, '*');
+    return json(res, 200, getInventoryAdmin());
+  }
+
+  const inventoryMatch = pathname.match(/^\/api\/admin\/inventory\/products\/(\d+)$/);
+  if (req.method === 'PATCH' && inventoryMatch) {
+    requirePermission(user, '*');
+    const product = updateProductInventory(Number(inventoryMatch[1]), await readJson(req));
+    audit(req, 'catalog.inventory_updated', 'product', product.id, {
+      name: product.name,
+      stockQuantity: product.stockQuantity,
+      stockEnabled: product.stockEnabled
+    }, user.id);
+    return json(res, 200, { product });
+  }
+
+  const recipeMatch = pathname.match(/^\/api\/admin\/inventory\/products\/(\d+)\/recipe$/);
+  if (req.method === 'PATCH' && recipeMatch) {
+    requirePermission(user, '*');
+    const recipe = updateProductRecipe(Number(recipeMatch[1]), await readJson(req));
+    audit(req, 'catalog.recipe_updated', 'product', recipeMatch[1], { items: recipe.length }, user.id);
+    return json(res, 200, { recipe });
+  }
+
+  if (req.method === 'POST' && pathname === '/api/admin/inventory/items') {
+    requirePermission(user, '*');
+    const item = saveInventoryItem(await readJson(req));
+    audit(req, 'inventory.item_created', 'inventory_item', item.id, { name: item.name }, user.id);
+    return json(res, 201, { item });
+  }
+
+  const inventoryItemMatch = pathname.match(/^\/api\/admin\/inventory\/items\/(\d+)$/);
+  if (req.method === 'PATCH' && inventoryItemMatch) {
+    requirePermission(user, '*');
+    const item = updateInventoryItem(Number(inventoryItemMatch[1]), await readJson(req));
+    audit(req, 'inventory.item_updated', 'inventory_item', item.id, {
+      name: item.name,
+      stockQuantity: item.stockQuantity
+    }, user.id);
+    return json(res, 200, { item });
+  }
+  if (req.method === 'DELETE' && inventoryItemMatch) {
+    requirePermission(user, '*');
+    deleteInventoryItem(Number(inventoryItemMatch[1]));
+    audit(req, 'inventory.item_deleted', 'inventory_item', inventoryItemMatch[1], {}, user.id);
+    return json(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && pathname === '/api/admin/products') {
@@ -609,14 +894,185 @@ async function handleAdminApi(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  if (req.method === 'GET' && pathname === '/api/admin/extras') {
+    if (!userCan(user, 'catalog:view')) requirePermission(user, '*');
+    return json(res, 200, { extras: listExtras(true), optionalGroups: listOptionalGroups(true) });
+  }
+  if (req.method === 'POST' && pathname === '/api/admin/extras') {
+    requirePermission(user, '*');
+    const extra = saveExtra(await readJson(req));
+    audit(req, 'catalog.extra_created', 'extra', extra.id, { name: extra.name, priceCents: extra.priceCents }, user.id);
+    return json(res, 201, { extra });
+  }
+
+  const extraMatch = pathname.match(/^\/api\/admin\/extras\/(\d+)$/);
+  if (req.method === 'PATCH' && extraMatch) {
+    requirePermission(user, '*');
+    const extra = updateExtra(Number(extraMatch[1]), await readJson(req));
+    audit(req, 'catalog.extra_updated', 'extra', extra.id, { name: extra.name, priceCents: extra.priceCents, active: extra.active }, user.id);
+    return json(res, 200, { extra });
+  }
+  if (req.method === 'DELETE' && extraMatch) {
+    requirePermission(user, '*');
+    deleteExtra(Number(extraMatch[1]));
+    audit(req, 'catalog.extra_deleted', 'extra', extraMatch[1], {}, user.id);
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === 'GET' && pathname === '/api/admin/optional-groups') {
+    if (!userCan(user, 'catalog:view')) requirePermission(user, '*');
+    return json(res, 200, { optionalGroups: listOptionalGroups(true) });
+  }
+  if (req.method === 'POST' && pathname === '/api/admin/optional-groups') {
+    requirePermission(user, '*');
+    const group = saveOptionalGroup(await readJson(req));
+    audit(req, 'catalog.optional_group_created', 'optional_group', group.id, { name: group.name }, user.id);
+    return json(res, 201, { group });
+  }
+
+  const optionalGroupMatch = pathname.match(/^\/api\/admin\/optional-groups\/(\d+)$/);
+  if (req.method === 'PATCH' && optionalGroupMatch) {
+    requirePermission(user, '*');
+    const group = updateOptionalGroup(Number(optionalGroupMatch[1]), await readJson(req));
+    audit(req, 'catalog.optional_group_updated', 'optional_group', group.id, { name: group.name }, user.id);
+    return json(res, 200, { group });
+  }
+  if (req.method === 'DELETE' && optionalGroupMatch) {
+    requirePermission(user, '*');
+    deleteOptionalGroup(Number(optionalGroupMatch[1]));
+    audit(req, 'catalog.optional_group_deleted', 'optional_group', optionalGroupMatch[1], {}, user.id);
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === 'POST' && pathname === '/api/admin/optional-options') {
+    requirePermission(user, '*');
+    const option = saveOptionalOption(await readJson(req));
+    audit(req, 'catalog.optional_option_created', 'optional_option', option.id, { name: option.name, groupId: option.groupId }, user.id);
+    return json(res, 201, { option });
+  }
+
+  const optionalOptionMatch = pathname.match(/^\/api\/admin\/optional-options\/(\d+)$/);
+  if (req.method === 'PATCH' && optionalOptionMatch) {
+    requirePermission(user, '*');
+    const option = updateOptionalOption(Number(optionalOptionMatch[1]), await readJson(req));
+    audit(req, 'catalog.optional_option_updated', 'optional_option', option.id, { name: option.name, groupId: option.groupId }, user.id);
+    return json(res, 200, { option });
+  }
+  if (req.method === 'DELETE' && optionalOptionMatch) {
+    requirePermission(user, '*');
+    deleteOptionalOption(Number(optionalOptionMatch[1]));
+    audit(req, 'catalog.optional_option_deleted', 'optional_option', optionalOptionMatch[1], {}, user.id);
+    return json(res, 200, { ok: true });
+  }
+
   if (req.method === 'GET' && pathname === '/api/admin/reports') {
     requirePermission(user, 'reports:view');
     return json(res, 200, getReports());
   }
 
+  if (req.method === 'GET' && pathname === '/api/admin/accounting') {
+    if (!userCan(user, 'reports:view')) requirePermission(user, '*');
+    return json(res, 200, getAccounting());
+  }
+  if (req.method === 'POST' && pathname === '/api/admin/accounting/entries') {
+    requirePermission(user, '*');
+    const entry = saveAccountingEntry(await readJson(req), user.id);
+    audit(req, 'accounting.entry_created', 'accounting_entry', entry.id, {
+      type: entry.type,
+      category: entry.category,
+      amountCents: entry.amountCents
+    }, user.id);
+    return json(res, 201, { entry });
+  }
+  if (req.method === 'POST' && pathname === '/api/admin/accounting/cash-closings') {
+    requirePermission(user, '*');
+    const closing = saveCashClosing(await readJson(req), user.id);
+    audit(req, 'accounting.cash_closed', 'cash_closing', closing.id, {
+      businessDate: closing.businessDate,
+      differenceCents: closing.differenceCents
+    }, user.id);
+    return json(res, 201, { closing });
+  }
+  if (req.method === 'POST' && pathname === '/api/admin/accounting/purchases') {
+    requirePermission(user, '*');
+    const purchase = saveSupplierPurchase(await readJson(req), user.id);
+    audit(req, 'accounting.purchase_created', 'supplier_purchase', purchase.id, {
+      supplierName: purchase.supplierName,
+      totalCents: purchase.totalCents,
+      items: purchase.items.length
+    }, user.id);
+    return json(res, 201, { purchase });
+  }
+  if (req.method === 'POST' && pathname === '/api/admin/accounting/waste') {
+    requirePermission(user, '*');
+    const waste = saveWasteLog(await readJson(req), user.id);
+    audit(req, 'accounting.waste_logged', 'waste_log', waste.id, {
+      itemName: waste.itemName,
+      quantity: waste.quantity,
+      costCents: waste.costCents
+    }, user.id);
+    return json(res, 201, { waste });
+  }
+  const accountingEntryMatch = pathname.match(/^\/api\/admin\/accounting\/entries\/(\d+)$/);
+  if (req.method === 'DELETE' && accountingEntryMatch) {
+    requirePermission(user, '*');
+    deleteAccountingEntry(Number(accountingEntryMatch[1]));
+    audit(req, 'accounting.entry_deleted', 'accounting_entry', accountingEntryMatch[1], {}, user.id);
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === 'GET' && pathname === '/api/admin/promotions') {
+    if (!userCan(user, 'catalog:view')) requirePermission(user, '*');
+    return json(res, 200, { promotions: listPromotions() });
+  }
+  if (req.method === 'POST' && pathname === '/api/admin/promotions') {
+    requirePermission(user, '*');
+    const promotion = savePromotion(await readJson(req));
+    audit(req, 'sales.promotion_created', 'promotion', promotion.id, { code: promotion.code }, user.id);
+    return json(res, 201, { promotion });
+  }
+  const promotionMatch = pathname.match(/^\/api\/admin\/promotions\/(\d+)$/);
+  if (req.method === 'PATCH' && promotionMatch) {
+    requirePermission(user, '*');
+    const promotion = updatePromotion(Number(promotionMatch[1]), await readJson(req));
+    audit(req, 'sales.promotion_updated', 'promotion', promotion.id, { code: promotion.code, active: promotion.active }, user.id);
+    return json(res, 200, { promotion });
+  }
+  if (req.method === 'DELETE' && promotionMatch) {
+    requirePermission(user, '*');
+    deletePromotion(Number(promotionMatch[1]));
+    audit(req, 'sales.promotion_deleted', 'promotion', promotionMatch[1], {}, user.id);
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === 'GET' && pathname === '/api/admin/delivery') {
+    if (!userCan(user, 'delivery:view') && !userCan(user, 'orders:view')) requirePermission(user, '*');
+    return json(res, 200, getDeliveryAdmin());
+  }
+  if (req.method === 'POST' && pathname === '/api/admin/delivery/zones') {
+    requirePermission(user, '*');
+    const zone = saveDeliveryZone(await readJson(req));
+    audit(req, 'delivery.zone_created', 'delivery_zone', zone.id, { name: zone.name }, user.id);
+    return json(res, 201, { zone });
+  }
+  const deliveryZoneMatch = pathname.match(/^\/api\/admin\/delivery\/zones\/(\d+)$/);
+  if (req.method === 'PATCH' && deliveryZoneMatch) {
+    requirePermission(user, '*');
+    const zone = updateDeliveryZone(Number(deliveryZoneMatch[1]), await readJson(req));
+    audit(req, 'delivery.zone_updated', 'delivery_zone', zone.id, { name: zone.name, active: zone.active }, user.id);
+    return json(res, 200, { zone });
+  }
+  const deliveryMethodMatch = pathname.match(/^\/api\/admin\/delivery\/methods\/(\d+)$/);
+  if (req.method === 'PATCH' && deliveryMethodMatch) {
+    requirePermission(user, '*');
+    const method = updateDeliveryMethod(Number(deliveryMethodMatch[1]), await readJson(req));
+    audit(req, 'delivery.method_updated', 'delivery_method', method.id, { name: method.name, active: method.active }, user.id);
+    return json(res, 200, { method });
+  }
+
   if (req.method === 'GET' && pathname === '/api/admin/settings') {
     requirePermission(user, '*');
-    return json(res, 200, { business: getBusiness(), options: getCheckoutOptions() });
+    return json(res, 200, { business: getBusiness(), options: getCheckoutOptions(), branches: listBranches() });
   }
   if (req.method === 'PATCH' && pathname === '/api/admin/settings') {
     requirePermission(user, '*');
@@ -636,6 +1092,27 @@ async function handleAdminApi(req, res, url) {
     return json(res, 201, { user: savedUser });
   }
 
+  const userMatch = pathname.match(/^\/api\/admin\/users\/(\d+)$/);
+  if (req.method === 'PATCH' && userMatch) {
+    requirePermission(user, '*');
+    const userId = Number(userMatch[1]);
+    const body = await readJson(req);
+    if (userId === user.id && body.active === false) {
+      throw new ValidationError('No puedes desactivar tu propio usuario.', 400);
+    }
+    const savedUser = updateUser(userId, body);
+    audit(req, 'users.updated', 'user', savedUser.id, { email: savedUser.email, roleName: savedUser.roleName, active: savedUser.active }, user.id);
+    return json(res, 200, { user: savedUser });
+  }
+
+  const roleMatch = pathname.match(/^\/api\/admin\/roles\/(\d+)$/);
+  if (req.method === 'PATCH' && roleMatch) {
+    requirePermission(user, '*');
+    const role = updateRole(Number(roleMatch[1]), await readJson(req));
+    audit(req, 'roles.updated', 'role', role.id, { name: role.name, permissions: role.permissions }, user.id);
+    return json(res, 200, { role });
+  }
+
   if (req.method === 'GET' && pathname === '/api/admin/audit') {
     requirePermission(user, '*');
     return json(res, 200, {
@@ -649,7 +1126,18 @@ async function handleAdminApi(req, res, url) {
 
   if (req.method === 'GET' && pathname === '/api/admin/backups') {
     requirePermission(user, '*');
-    return json(res, 200, { backups: listBackups() });
+    return json(res, 200, { backups: listBackups(), notifications: listNotificationLogs() });
+  }
+
+  const backupDownloadMatch = pathname.match(/^\/api\/admin\/backups\/([^/]+)$/);
+  if (req.method === 'GET' && backupDownloadMatch) {
+    requirePermission(user, '*');
+    const fileName = path.basename(backupDownloadMatch[1]);
+    const backup = listBackups().find((item) => item.fileName === fileName);
+    if (!backup) throw new ValidationError('Backup no encontrado.', 404);
+    return sendFile(res, path.join(backupDir, fileName), 'application/octet-stream', {
+      'Content-Disposition': `attachment; filename="${fileName}"`
+    });
   }
 
   if (req.method === 'POST' && pathname === '/api/admin/backups') {
@@ -680,7 +1168,12 @@ function serveStatic(req, res, url) {
     '/admin/kds': 'admin/index.html',
     '/admin/products': 'admin/index.html',
     '/admin/categories': 'admin/index.html',
+    '/admin/extras': 'admin/index.html',
+    '/admin/inventory': 'admin/index.html',
+    '/admin/promotions': 'admin/index.html',
+    '/admin/delivery': 'admin/index.html',
     '/admin/reports': 'admin/index.html',
+    '/admin/accounting': 'admin/index.html',
     '/admin/settings': 'admin/index.html',
     '/admin/audit': 'admin/index.html',
     '/admin/users': 'admin/index.html',
@@ -728,7 +1221,7 @@ function productArtSvg(slug) {
       <path d="M100 143c24 42 92 42 120 0v74c0 25-20 45-45 45h-30c-25 0-45-20-45-45z" fill="${light}"/>
       <circle cx="132" cy="170" r="13" fill="${dark}"/><circle cx="184" cy="170" r="13" fill="${dark}"/>
       <path d="M196 56h40" stroke="${light}" stroke-width="18" stroke-linecap="round"/>
-      <text x="160" y="292" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="800" fill="${light}">BOBA</text>
+      <text x="160" y="292" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-weight="800" fill="${light}">LONG CHA</text>
     </svg>`;
   }
   const food = slug.includes('sandwich') || slug.includes('combo');

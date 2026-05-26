@@ -23,14 +23,32 @@
       </div>
     </header>
 
-    <main class="shell page-grid">
-      <section class="panel">
-        <h2>Datos del pedido</h2>
+    <main class="shell page-grid checkout-layout">
+      <section class="panel checkout-card">
+        <div class="checkout-steps" aria-label="Pasos del pedido">
+          <span class="is-active">Datos</span>
+          <span>Entrega</span>
+          <span>Pago</span>
+          <span>Confirmar</span>
+        </div>
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Checkout</span>
+            <h2>Datos del pedido</h2>
+          </div>
+        </div>
         <form id="checkoutForm" class="form-grid" style="margin-top:14px">
           <label>Nombre<input class="field" name="name" required autocomplete="name"></label>
           <label>Telefono<input class="field" name="phone" required autocomplete="tel"></label>
           <label>Entrega<select class="select" name="deliveryMethodId" id="deliveryMethod" required></select></label>
           <label>Pago<select class="select" name="paymentMethodId" id="paymentMethod" required></select></label>
+          <label class="wide">Referencia de pago<input class="field" name="paymentReference" id="paymentReference" placeholder="Transferencia, voucher o nota de pago"></label>
+          <label class="wide">Cupon
+            <div class="coupon-row">
+              <input class="field" name="couponCode" id="couponCode" placeholder="Ej. LONGCHA10">
+              <button class="btn btn--soft" type="button" id="applyCouponBtn">Aplicar</button>
+            </div>
+          </label>
           <label class="wide" id="zoneWrap" hidden>Zona de delivery<select class="select" name="deliveryZoneId" id="deliveryZone"></select></label>
           <label class="wide" id="addressWrap" hidden>Direccion<textarea class="textarea" name="address" autocomplete="street-address"></textarea></label>
           <label class="wide" id="referenceWrap" hidden>Referencia<textarea class="textarea" name="reference"></textarea></label>
@@ -43,10 +61,16 @@
         <div id="orderSuccess" hidden></div>
       </section>
 
-      <aside class="panel">
-        <h2>Resumen</h2>
+      <aside class="panel checkout-summary">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Tu orden</span>
+            <h2>Resumen</h2>
+          </div>
+        </div>
         <div class="cart-lines" id="checkoutCart" style="margin-top:14px"></div>
         <div class="price-row" style="margin-top:14px"><strong>Subtotal</strong><strong id="checkoutSubtotal">$0.00</strong></div>
+        <div class="price-row" id="checkoutDiscountRow" hidden><span>Descuento</span><span id="checkoutDiscount">-$0.00</span></div>
         <div class="price-row"><span>Delivery</span><span id="checkoutDelivery">$0.00</span></div>
         <div class="price-row"><strong>Total</strong><strong id="checkoutTotal">$0.00</strong></div>
       </aside>
