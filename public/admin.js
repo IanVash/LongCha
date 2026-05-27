@@ -71,7 +71,7 @@ function applyAdminBrand(business) {
   state.business = business;
   $('#adminBusinessName').textContent = business.name || 'Long Cha';
   const logo = $('.brand-lockup img');
-  if (logo) logo.src = business.logoUrl || '/api/public/art/logo.svg';
+  if (logo) logo.src = business.logoUrl || '/assets/brand/longcha-mark.png';
 }
 
 function applyBusinessStatus(openState) {
@@ -730,7 +730,7 @@ async function renderProductsAdmin() {
         <input type="hidden" name="id">
         <section class="product-image-panel">
           <div class="product-image-frame">
-            <img id="productImagePreview" src="/api/public/art/logo.svg" alt="Vista previa del producto">
+            <img id="productImagePreview" src="/assets/brand/longcha-mark.png" alt="Vista previa del producto">
           </div>
           <div class="product-image-copy">
             <span class="eyebrow">Imagen del menu</span>
@@ -862,7 +862,7 @@ function productSectionCard(group) {
 }
 
 function productAdminRow(product) {
-  const image = product.imageUrl || '/api/public/art/logo.svg';
+  const image = product.imageUrl || '/assets/brand/longcha-mark.png';
   const searchText = [product.name, product.description, product.categoryName].join(' ').toLowerCase();
   const optionCount = (product.extras || []).length + (product.optionalGroups || []).length;
   return `
@@ -911,7 +911,7 @@ function updateProductImagePreview() {
   const form = $('#productForm');
   const preview = $('#productImagePreview');
   if (!form || !preview) return;
-  preview.src = form.elements.imageUrl.value || '/api/public/art/logo.svg';
+  preview.src = form.elements.imageUrl.value || '/assets/brand/longcha-mark.png';
 }
 
 function previewSelectedProductImage() {
@@ -2307,7 +2307,7 @@ async function renderSettings() {
     <div class="settings-layout">
       <aside class="settings-rail">
         <div class="settings-preview">
-          <img id="settingsLogoPreview" src="${escapeHtml(business.logoUrl || '/api/public/art/logo.svg')}" alt="Logo">
+          <img id="settingsLogoPreview" src="${escapeHtml(business.logoUrl || '/assets/brand/longcha-mark.png')}" alt="Logo">
           <div>
             <strong id="settingsNamePreview">${escapeHtml(business.name)}</strong>
             <div class="muted">${business.isOpenManual ? 'Abierto' : 'Horario automatico'}</div>
@@ -2388,7 +2388,7 @@ async function renderSettings() {
     $('#settingsNamePreview').textContent = event.target.value || business.name;
   });
   $('#settingsForm').elements.logoUrl.addEventListener('input', (event) => {
-    $('#settingsLogoPreview').src = event.target.value || '/api/public/art/logo.svg';
+    $('#settingsLogoPreview').src = event.target.value || '/assets/brand/longcha-mark.png';
   });
   $('#settingsForm').addEventListener('submit', async (event) => {
     event.preventDefault();

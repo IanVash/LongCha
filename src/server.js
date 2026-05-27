@@ -117,6 +117,8 @@ const mimeTypes = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
   '.ico': 'image/x-icon'
 };
 
@@ -1216,10 +1218,10 @@ function productArtSvg(slug) {
     'strawberry-refresher': ['#ef4e67', '#ffd6de', '#294d43'],
     'crispy-chicken-sandwich': ['#d85a33', '#ffe2a8', '#4d2b17'],
     'cheesecake-cup': ['#e7b84d', '#fff2c8', '#593f2a'],
-    'combo-boba-snack': ['#159a75', '#ffe2a8', '#243b33'],
-    logo: ['#159a75', '#f7bd3c', '#111111']
+    'combo-boba-snack': ['#146e43', '#fce9c0', '#2b2b2b'],
+    logo: ['#146e43', '#fce9c0', '#2b2b2b']
   };
-  const [primary, light, dark] = palettes[slug] || ['#159a75', '#f2f7f4', '#222222'];
+  const [primary, light, dark] = palettes[slug] || ['#146e43', '#fff8e8', '#2b2b2b'];
   if (slug === 'logo') {
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320">
       <rect width="320" height="320" rx="72" fill="${dark}"/>

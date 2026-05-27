@@ -655,7 +655,7 @@ function seedDatabase() {
   `).run(
     'Long Cha',
     'long-cha',
-    '/api/public/art/logo.svg',
+    '/assets/brand/longcha-mark.png',
     '+503 2222-0000',
     '50370000000',
     'Colonia Escalon, San Salvador',

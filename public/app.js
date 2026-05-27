@@ -91,7 +91,7 @@ function updateBusinessHeader(menu) {
   $$('[data-business-name]').forEach((node) => { node.textContent = menu.business.name; });
   $$('[data-business-heading]').forEach((node) => { node.textContent = menu.business.name; });
   $$('[data-business-logo]').forEach((node) => {
-    node.src = menu.business.logoUrl || '/api/public/art/logo.svg';
+    node.src = menu.business.logoUrl || '/assets/brand/longcha-mark.png';
   });
   const openState = $('[data-open-state]');
   if (openState) {
