@@ -2616,6 +2616,7 @@ async function renderSettings() {
   const business = data.business;
   const printerConfig = normalizeAdminPrinterConfig(business.printerConfig || {});
   const printers = printerConfig.printers;
+  const hasActiveHours = (business.hours || []).some((item) => item.active);
   applyAdminBrand(business);
   const menuUrl = `${location.origin}/menu`;
   const tableExampleUrl = `${location.origin}/menu?table=Mesa%201`;
@@ -2626,7 +2627,7 @@ async function renderSettings() {
           <img id="settingsLogoPreview" src="${escapeHtml(business.logoUrl || '/assets/brand/longcha-mark.png')}" alt="Logo">
           <div>
             <strong id="settingsNamePreview">${escapeHtml(business.name)}</strong>
-            <div class="muted">${business.isOpenManual ? 'Abierto' : 'Horario automatico'}</div>
+            <div class="muted">${hasActiveHours ? 'Horario automatico activo' : (business.isOpenManual ? 'Abierto manual' : 'Cerrado manual')}</div>
           </div>
         </div>
         <div class="qr-box"><img src="/qr.svg?data=${encodeURIComponent(menuUrl)}" alt="QR del menu"></div>
@@ -2667,11 +2668,11 @@ async function renderSettings() {
         <section class="settings-block">
           <header><h2>Operacion</h2></header>
           <div class="switch-row">
-            <div><strong>Estado manual</strong><div class="muted">Abierto / cerrado</div></div>
+            <div><strong>Apertura manual</strong><div class="muted">Se usa solo si no hay dias activos en horarios</div></div>
             <label><input type="checkbox" name="isOpenManual" ${business.isOpenManual ? 'checked' : ''}> Abierto</label>
           </div>
           <div class="switch-row">
-            <div><strong>Pedidos fuera de horario</strong><div class="muted">Horario flexible</div></div>
+            <div><strong>Pedidos fuera de horario</strong><div class="muted">Ignora el horario configurado</div></div>
             <label><input type="checkbox" name="allowOrdersOutsideHours" ${business.allowOrdersOutsideHours ? 'checked' : ''}> Permitir</label>
           </div>
           <label style="display:block;margin-top:12px">Cierre temporal hasta<input class="field" name="temporaryClosedUntil" type="datetime-local" value="${business.temporaryClosedUntil ? escapeHtml(business.temporaryClosedUntil.slice(0, 16)) : ''}"></label>
@@ -2712,6 +2713,7 @@ async function renderSettings() {
 
         <section class="settings-block">
           <header><h2>Horarios</h2></header>
+          <p class="muted" style="margin-top:0">Cuando un dia esta activo, el sistema solo recibe pedidos entre apertura y cierre. Fuera de ese rango el menu y el kiosk quedan bloqueados.</p>
           <div class="schedule-grid" id="hoursEditor">${renderHoursEditor(business.hours)}</div>
         </section>
 

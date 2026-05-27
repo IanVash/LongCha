@@ -1269,21 +1269,33 @@ export function isBusinessOpen() {
   if (business.temporaryClosedUntil && new Date(business.temporaryClosedUntil).getTime() > Date.now()) {
     return { open: false, message: business.closedMessage };
   }
-  if (business.isOpenManual) return { open: true, message: '' };
   if (business.allowOrdersOutsideHours) return { open: true, message: '' };
 
   const now = new Date();
   const minutes = now.getHours() * 60 + now.getMinutes();
-  const today = business.hours.find((item) => Number(item.day) === now.getDay());
-  if (!today?.active) return { open: false, message: business.closedMessage };
-  const [openHour, openMinute] = today.open.split(':').map(Number);
-  const [closeHour, closeMinute] = today.close.split(':').map(Number);
-  const openMinutes = openHour * 60 + openMinute;
-  const closeMinutes = closeHour * 60 + closeMinute;
-  return {
-    open: minutes >= openMinutes && minutes <= closeMinutes,
-    message: business.closedMessage
-  };
+  const activeHours = (business.hours || []).filter((item) => item?.active);
+  if (activeHours.length) {
+    const dayIsOpen = (schedule, currentMinutes, overnightFromPreviousDay = false) => {
+      if (!schedule) return false;
+      const [openHour, openMinute] = String(schedule.open || '00:00').split(':').map(Number);
+      const [closeHour, closeMinute] = String(schedule.close || '00:00').split(':').map(Number);
+      const openMinutes = openHour * 60 + openMinute;
+      const closeMinutes = closeHour * 60 + closeMinute;
+      if (closeMinutes < openMinutes) {
+        return overnightFromPreviousDay ? currentMinutes <= closeMinutes : currentMinutes >= openMinutes;
+      }
+      return !overnightFromPreviousDay && currentMinutes >= openMinutes && currentMinutes <= closeMinutes;
+    };
+    const today = activeHours.find((item) => Number(item.day) === now.getDay());
+    const yesterday = activeHours.find((item) => Number(item.day) === ((now.getDay() + 6) % 7));
+    return {
+      open: dayIsOpen(today, minutes) || dayIsOpen(yesterday, minutes, true),
+      message: business.closedMessage
+    };
+  }
+
+  if (business.isOpenManual) return { open: true, message: '' };
+  return { open: false, message: business.closedMessage };
 }
 
 function mapCategory(row) {

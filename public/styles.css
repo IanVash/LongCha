@@ -3145,6 +3145,13 @@ body[data-page="kiosk"] {
   transform: scale(0.99);
 }
 
+.kiosk-start-option:disabled,
+.kiosk-start-option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
 .kiosk-start-option__icon {
   width: clamp(82px, 10vw, 120px);
   height: clamp(82px, 10vw, 120px);
@@ -3168,6 +3175,12 @@ body[data-page="kiosk"] {
   font-size: clamp(0.98rem, 1.4vw, 1.18rem);
   font-weight: 760;
   line-height: 1.35;
+}
+
+.kiosk-closed-note {
+  width: min(680px, 100%);
+  margin: 0 auto;
+  text-align: center;
 }
 
 .kiosk-layout {

@@ -170,6 +170,30 @@ function updateBusinessHeader(menu) {
   });
 }
 
+function ordersAreOpen(source) {
+  return Boolean(source?.openState?.open);
+}
+
+function closedOrderMessage(source) {
+  return source?.openState?.message || source?.business?.closedMessage || 'Estamos cerrados en este momento.';
+}
+
+function notifyOrdersClosed(source) {
+  const message = closedOrderMessage(source);
+  if ($('#toast')) showToast(message);
+  else alert(message);
+}
+
+function closedOrderNotice(source) {
+  if (ordersAreOpen(source)) return '';
+  return `
+    <div class="order-closed-note">
+      <span>Pedidos cerrados</span>
+      <strong>${escapeHtml(closedOrderMessage(source))}</strong>
+    </div>
+  `;
+}
+
 function getTableLabel() {
   return localStorage.getItem(TABLE_KEY) || '';
 }
@@ -221,6 +245,12 @@ async function initMenu() {
   const heroCount = $('#heroProductCount');
   if (heroCount) heroCount.textContent = `${state.menu.products.length} productos`;
   renderTableNotice();
+  if (!ordersAreOpen(state.menu)) {
+    const noticeWrap = document.createElement('div');
+    noticeWrap.className = 'shell';
+    noticeWrap.innerHTML = closedOrderNotice(state.menu);
+    document.querySelector('.menu-toolbar')?.after(noticeWrap);
+  }
   renderCategoryChips(state);
   renderProducts(state);
   updateCartBar();
@@ -239,10 +269,14 @@ async function initMenu() {
   document.addEventListener('click', (event) => {
     const addButton = event.target.closest('[data-add-product]');
     if (addButton) {
+      if (!ordersAreOpen(state.menu)) {
+        notifyOrdersClosed(state.menu);
+        return;
+      }
       const product = state.menu.products.find((item) => item.id === Number(addButton.dataset.addProduct));
       if (product) openProductDialog(product);
     }
-    if (event.target.closest('[data-open-cart]')) openCartDialog();
+    if (event.target.closest('[data-open-cart]')) openCartDialog(state.menu);
   });
 }
 
@@ -279,17 +313,17 @@ function renderProducts(state) {
   const featured = state.menu.featured.filter((product) => productMatches(product, state));
   $('#productCount').textContent = `${products.length} productos`;
   $('#featuredSection').hidden = featured.length === 0;
-  $('#featuredProducts').innerHTML = featured.map(productCard).join('');
+  $('#featuredProducts').innerHTML = featured.map((product) => productCard(product, ordersAreOpen(state.menu))).join('');
   $('#productGrid').innerHTML = products.length
-    ? products.map(productCard).join('')
+    ? products.map((product) => productCard(product, ordersAreOpen(state.menu))).join('')
     : '<div class="empty-state">No encontramos productos con ese filtro.</div>';
 }
 
-function productCard(product) {
-  const disabled = product.soldOut ? 'disabled' : '';
+function productCard(product, openForOrders = true) {
+  const disabled = product.soldOut || !openForOrders ? 'disabled' : '';
   const optionCount = publicOptionalGroups(product).length + publicVariants(product).length + (publicExtras(product).length ? 1 : 0);
   return `
-    <article class="product-card ${product.soldOut ? 'is-sold-out' : ''}">
+    <article class="product-card ${product.soldOut || !openForOrders ? 'is-sold-out' : ''}">
       <div class="product-card__media">
         <img src="${escapeHtml(product.imageUrl)}" alt="${escapeHtml(product.name)}" loading="lazy">
         <div class="product-card__badges">
@@ -312,6 +346,8 @@ function productCard(product) {
           <span class="price">${money(product.basePriceCents)}</span>
           ${product.soldOut
             ? '<span class="badge badge--danger">Agotado</span>'
+            : !openForOrders
+              ? '<button class="btn btn--ghost btn--small product-add-cta" type="button" disabled>Cerrado</button>'
             : `<button class="btn btn--brand btn--small product-add-cta" type="button" data-add-product="${product.id}" ${disabled}>Agregar</button>`}
         </div>
       </div>
@@ -587,9 +623,10 @@ function cartLine(item) {
   `;
 }
 
-function openCartDialog() {
+function openCartDialog(source = {}) {
   const dialog = $('#cartDialog');
   const cart = getCart();
+  const openForOrders = !source.openState || ordersAreOpen(source);
   dialog.innerHTML = `
     <div class="dialog__body">
       <div class="dialog__head">
@@ -599,12 +636,15 @@ function openCartDialog() {
         </div>
         <button class="btn btn--ghost btn--small" type="button" data-close-dialog>Cerrar</button>
       </div>
+      ${openForOrders ? '' : closedOrderNotice(source)}
       <div class="cart-lines" id="cartDialogLines">
         ${cart.length ? cart.map(cartLine).join('') : '<div class="empty-state">Tu carrito esta vacio.</div>'}
       </div>
       <div class="price-row"><strong>Total</strong><strong>${money(cartTotalCents(cart))}</strong></div>
       <div class="nav-actions" style="justify-content:flex-start">
-        <a class="btn btn--brand" href="/checkout">Confirmar pedido</a>
+        ${openForOrders
+          ? '<a class="btn btn--brand" href="/checkout">Confirmar pedido</a>'
+          : '<button class="btn btn--brand" type="button" disabled>Pedidos cerrados</button>'}
         <button class="btn btn--ghost" type="button" data-close-dialog>Seguir viendo menu</button>
       </div>
     </div>
@@ -640,6 +680,12 @@ async function initCheckout() {
   const zoneSelect = $('#deliveryZone');
   const couponInput = $('#couponCode');
   const applyCouponBtn = $('#applyCouponBtn');
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (!ordersAreOpen(options)) {
+    form.insertAdjacentHTML('beforebegin', closedOrderNotice(options));
+    submitButton.disabled = true;
+    submitButton.textContent = 'Pedidos cerrados';
+  }
 
   deliverySelect.innerHTML = options.deliveryMethods.map((method) => `<option value="${method.id}" data-slug="${method.slug}">${escapeHtml(method.name)}</option>`).join('');
   paymentSelect.innerHTML = options.paymentMethods.map((method) => `<option value="${method.id}">${escapeHtml(method.name)}</option>`).join('');
@@ -693,6 +739,10 @@ async function initCheckout() {
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (!ordersAreOpen(options)) {
+      notifyOrdersClosed(options);
+      return;
+    }
     const currentCart = getCart();
     if (!currentCart.length) {
       alert('Agrega productos antes de enviar el pedido.');
@@ -795,6 +845,28 @@ function kioskServiceLabel(state) {
   };
 }
 
+function renderKioskStartState(state) {
+  const start = $('#kioskStart');
+  if (!start) return;
+  const openForOrders = ordersAreOpen(state.menu);
+  $$('[data-kiosk-service-mode]', start).forEach((button) => {
+    button.disabled = !openForOrders;
+    button.classList.toggle('is-disabled', !openForOrders);
+  });
+  let note = $('#kioskClosedNotice');
+  if (!openForOrders) {
+    if (!note) {
+      note = document.createElement('div');
+      note.id = 'kioskClosedNotice';
+      note.className = 'order-closed-note kiosk-closed-note';
+      $('.kiosk-start__options', start)?.after(note);
+    }
+    note.innerHTML = `<span>Pedidos cerrados</span><strong>${escapeHtml(closedOrderMessage(state.menu))}</strong>`;
+  } else if (note) {
+    note.remove();
+  }
+}
+
 function showKioskStart(state, reset = false) {
   const start = $('#kioskStart');
   const main = $('#kioskMain');
@@ -805,12 +877,18 @@ function showKioskStart(state, reset = false) {
     $('#kioskCustomerName').value = '';
     $('#kioskTableLabel').value = getTableLabel() || 'Kiosko';
   }
+  renderKioskStartState(state);
   start.hidden = false;
   main.hidden = true;
   window.scrollTo(0, 0);
 }
 
 function enterKioskMenu(state, mode) {
+  if (!ordersAreOpen(state.menu)) {
+    notifyOrdersClosed(state.menu);
+    showKioskStart(state);
+    return;
+  }
   const method = kioskMethodForServiceMode(state, mode);
   state.serviceMode = mode;
   state.deliveryMethodId = method?.id || state.deliveryMethodId;
@@ -919,6 +997,7 @@ function renderKioskCategories(state) {
 function renderKioskOrder(state) {
   const cart = getCart();
   const service = kioskServiceLabel(state);
+  const openForOrders = ordersAreOpen(state.menu);
   $('#kioskDeliveryOptions').innerHTML = state.serviceMode ? `
     <div class="kiosk-service-summary">
       <div>
@@ -940,7 +1019,8 @@ function renderKioskOrder(state) {
     .join('');
   $('#kioskCartLines').innerHTML = cart.length ? cart.map(cartLine).join('') : '<div class="empty-state">Agrega productos para empezar.</div>';
   $('#kioskTotal').textContent = money(cartTotalCents(cart));
-  $('#kioskSubmit').disabled = cart.length === 0;
+  $('#kioskSubmit').disabled = cart.length === 0 || !openForOrders;
+  $('#kioskSubmit').textContent = openForOrders ? 'Enviar pedido a cocina' : 'Pedidos cerrados';
 }
 
 function updateKioskClock() {
@@ -1245,6 +1325,11 @@ function openKioskSuccess(order, ticket = {}) {
 }
 
 async function submitKioskOrder(state) {
+  if (!ordersAreOpen(state.menu)) {
+    notifyOrdersClosed(state.menu);
+    showKioskStart(state);
+    return;
+  }
   const cart = getCart();
   if (!cart.length) {
     showToast('Agrega productos antes de enviar.');
@@ -1302,8 +1387,8 @@ async function submitKioskOrder(state) {
   } catch (error) {
     showToast(error.message);
   } finally {
-    submit.textContent = 'Enviar pedido a cocina';
-    submit.disabled = getCart().length === 0;
+    submit.textContent = ordersAreOpen(state.menu) ? 'Enviar pedido a cocina' : 'Pedidos cerrados';
+    submit.disabled = getCart().length === 0 || !ordersAreOpen(state.menu);
   }
 }
 
@@ -1355,6 +1440,11 @@ async function initKiosk() {
   $('#kioskProducts').addEventListener('click', (event) => {
     const addButton = event.target.closest('[data-add-product]');
     if (!addButton) return;
+    if (!ordersAreOpen(state.menu)) {
+      notifyOrdersClosed(state.menu);
+      showKioskStart(state);
+      return;
+    }
     const product = state.menu.products.find((item) => item.id === Number(addButton.dataset.addProduct));
     if (!product) return;
     openProductDialog(product, {
