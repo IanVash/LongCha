@@ -659,11 +659,15 @@ async function detectCupsPrinters() {
       message: printers.length ? '' : 'No se encontraron impresoras configuradas en CUPS.'
     };
   } catch (error) {
+    const missingLpstat = error.code === 'ENOENT' || /ENOENT|lpstat/i.test(error.message);
+    const message = missingLpstat
+      ? 'No se pueden detectar impresoras locales desde este servidor. Si la plataforma esta en Render, configura las impresoras manualmente por IP o por nombre en la PC donde corre el agente local.'
+      : `No se pudieron detectar impresoras en CUPS: ${error.message}`;
     return {
       platform: process.platform,
       source: 'cups',
       printers: [],
-      message: `No se pudieron detectar impresoras: ${error.message}`
+      message
     };
   }
 }

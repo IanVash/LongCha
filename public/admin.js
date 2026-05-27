@@ -2588,7 +2588,7 @@ function updateDetectedPrinterSelects() {
   const count = detectedPrintersState.printers.length;
   status.textContent = count
     ? `${count} impresora${count === 1 ? '' : 's'} detectada${count === 1 ? '' : 's'} en esta PC.`
-    : detectedPrintersState.message || 'No se encontraron impresoras instaladas en esta PC.';
+    : detectedPrintersState.message || 'No se encontraron impresoras. En Render debes configurar la impresora por IP o escribir el nombre exacto usado por el agente local.';
 }
 
 async function detectConnectedPrinters() {
@@ -2602,7 +2602,7 @@ async function detectConnectedPrinters() {
     detectedPrintersState.printers = data.printers || [];
     detectedPrintersState.message = data.message || '';
     updateDetectedPrinterSelects();
-    showToast(detectedPrintersState.printers.length ? 'Impresoras detectadas' : 'No se encontraron impresoras');
+    showToast(detectedPrintersState.printers.length ? 'Impresoras detectadas' : 'Configura por IP o por nombre manual');
   } catch (error) {
     if (status) status.textContent = error.message;
     showToast(error.message);
@@ -2700,7 +2700,7 @@ async function renderSettings() {
           <div class="printer-detection-status" id="printerDetectionStatus">
             ${detectedPrintersState.loaded
               ? `${detectedPrintersState.printers.length} impresora${detectedPrintersState.printers.length === 1 ? '' : 's'} detectada${detectedPrintersState.printers.length === 1 ? '' : 's'}.`
-              : 'Puedes seleccionar una impresora instalada en esta PC o configurar una impresora de red por IP.'}
+              : 'Si estas en Render, la deteccion automatica no puede ver las impresoras del local. Configura por IP de red o escribe el nombre exacto de la impresora instalada en la PC del agente.'}
           </div>
           <div class="printer-grid">
             ${renderThermalPrinterSettings('Caja', 'Impresora caja', 'Ticket de pago, recibo y cobro.', printers.caja)}
