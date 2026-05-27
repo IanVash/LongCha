@@ -1,8 +1,10 @@
 const CART_KEY = 'qr-food-pos-cart-v1';
+const KIOSK_CART_KEY = 'qr-food-pos-kiosk-cart-v1';
 const LAST_ORDER_KEY = 'qr-food-pos-last-order';
 const LAST_WHATSAPP_KEY = 'qr-food-pos-last-whatsapp-url';
 const CUSTOMER_ORDERS_KEY = 'qr-food-pos-customer-orders';
 const TABLE_KEY = 'qr-food-pos-table';
+const DEFAULT_KIOSK_IDLE_SECONDS = 75;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -30,16 +32,28 @@ async function api(path, options = {}) {
   return data;
 }
 
+function showToast(message) {
+  const toast = $('#toast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.add('is-visible');
+  setTimeout(() => toast.classList.remove('is-visible'), 2600);
+}
+
+function cartStorageKey() {
+  return page === 'kiosk' ? KIOSK_CART_KEY : CART_KEY;
+}
+
 function getCart() {
   try {
-    return JSON.parse(localStorage.getItem(CART_KEY) || '[]');
+    return JSON.parse(localStorage.getItem(cartStorageKey()) || '[]');
   } catch {
     return [];
   }
 }
 
 function saveCart(cart) {
-  localStorage.setItem(CART_KEY, JSON.stringify(cart));
+  localStorage.setItem(cartStorageKey(), JSON.stringify(cart));
   updateCartBar();
 }
 
@@ -272,7 +286,7 @@ function productFormTotalCents(product, formElement) {
   return (Number(product.basePriceCents || 0) + extrasTotal + optionTotal) * quantity;
 }
 
-function openProductDialog(product) {
+function openProductDialog(product, options = {}) {
   const dialog = $('#productDialog');
   dialog.className = 'dialog dialog--customizer';
   const variants = publicVariants(product);
@@ -377,7 +391,8 @@ function openProductDialog(product) {
     });
     saveCart(cart);
     dialog.close();
-    openCartDialog();
+    if (typeof options.afterAdd === 'function') options.afterAdd(cart.at(-1));
+    else openCartDialog();
   });
   updateTotal();
   dialog.showModal();
@@ -674,6 +689,357 @@ async function initCheckout() {
   renderSummary();
 }
 
+function kioskDeliveryMethods(options) {
+  const localMethods = (options.deliveryMethods || []).filter((method) => method.slug !== 'delivery');
+  return localMethods.length ? localMethods : (options.deliveryMethods || []);
+}
+
+function kioskPaymentMethods(options) {
+  const filtered = (options.paymentMethods || []).filter((method) => {
+    const slug = normalizedName(method.slug);
+    const name = normalizedName(method.name);
+    return slug !== 'pago-contra-entrega' && !name.includes('contra entrega');
+  });
+  return filtered.length ? filtered : (options.paymentMethods || []);
+}
+
+function kioskMethodButton(method, activeId, dataName, helperText = '') {
+  return `
+    <button class="kiosk-segment ${Number(activeId) === Number(method.id) ? 'is-active' : ''}" type="button" data-${dataName}="${method.id}">
+      <strong>${escapeHtml(method.name)}</strong>
+      ${helperText ? `<span>${escapeHtml(helperText)}</span>` : ''}
+    </button>
+  `;
+}
+
+function kioskPaymentHelper(method) {
+  const slug = normalizedName(method.slug);
+  if (slug === 'efectivo') return 'Pago en caja';
+  if (slug === 'tarjeta') return 'Caja / POS';
+  if (slug === 'transferencia') return 'Mostrar comprobante';
+  return String(method.instructions || 'Pago en caja').replace(/o contra entrega\.?/i, '').trim();
+}
+
+function kioskIdleMilliseconds() {
+  const rawSeconds = Number(new URLSearchParams(location.search).get('idle'));
+  const seconds = Number.isFinite(rawSeconds) && rawSeconds > 0 ? rawSeconds : DEFAULT_KIOSK_IDLE_SECONDS;
+  return Math.max(10, Math.min(600, seconds)) * 1000;
+}
+
+function isKioskBusy() {
+  return getCart().length > 0 || Boolean(document.querySelector('dialog[open]'));
+}
+
+function setupKioskScreensaver() {
+  const screensaver = $('#kioskScreensaver');
+  if (!screensaver) return;
+  const idleMs = kioskIdleMilliseconds();
+  let idleTimer = null;
+
+  const hideScreensaver = () => {
+    screensaver.hidden = true;
+    resetIdleTimer();
+  };
+  const showScreensaver = () => {
+    if (isKioskBusy()) {
+      resetIdleTimer();
+      return;
+    }
+    screensaver.hidden = false;
+  };
+  function resetIdleTimer() {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(showScreensaver, idleMs);
+  }
+
+  ['pointerdown', 'touchstart'].forEach((eventName) => {
+    document.addEventListener(eventName, () => {
+      if (screensaver.hidden) resetIdleTimer();
+    }, { passive: true });
+  });
+  document.addEventListener('keydown', () => {
+    if (screensaver.hidden) resetIdleTimer();
+    else hideScreensaver();
+  });
+  ['scroll', 'input', 'change'].forEach((eventName) => {
+    document.addEventListener(eventName, resetIdleTimer, { passive: true });
+  });
+  screensaver.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    hideScreensaver();
+  });
+  resetIdleTimer();
+}
+
+function kioskCategoryChips(state) {
+  return [
+    `<button class="chip ${state.category === 'all' ? 'is-active' : ''}" type="button" data-category="all">Todo</button>`,
+    ...state.menu.categories.map((category) => `
+      <button class="chip ${state.category === category.slug ? 'is-active' : ''}" type="button" data-category="${category.slug}">
+        ${escapeHtml(category.name)}
+      </button>
+    `)
+  ].join('');
+}
+
+function kioskProductCard(product) {
+  const disabled = product.soldOut ? 'disabled' : '';
+  return `
+    <article class="kiosk-product-card ${product.soldOut ? 'is-sold-out' : ''}">
+      <button type="button" data-add-product="${product.id}" ${disabled}>
+        <span class="kiosk-product-card__image">
+          <img src="${escapeHtml(product.imageUrl)}" alt="${escapeHtml(product.name)}" loading="lazy">
+          ${product.featured ? '<em>Popular</em>' : ''}
+        </span>
+        <span class="kiosk-product-card__body">
+          <strong>${escapeHtml(product.name)}</strong>
+          <small>${escapeHtml(product.description || product.categoryName || 'Long Cha')}</small>
+          <span>${product.soldOut ? 'Agotado' : money(product.basePriceCents)}</span>
+        </span>
+      </button>
+    </article>
+  `;
+}
+
+function renderKioskProducts(state) {
+  const products = state.menu.products.filter((product) => productMatches(product, state));
+  $('#kioskProductCount').textContent = `${products.length} productos`;
+  $('#kioskProducts').innerHTML = products.length
+    ? products.map(kioskProductCard).join('')
+    : '<div class="empty-state">No encontramos productos con ese filtro.</div>';
+}
+
+function renderKioskCategories(state) {
+  $('#kioskCategoryChips').innerHTML = kioskCategoryChips(state);
+}
+
+function renderKioskOrder(state) {
+  const cart = getCart();
+  $('#kioskDeliveryOptions').innerHTML = state.deliveryMethods
+    .map((method) => kioskMethodButton(
+      method,
+      state.deliveryMethodId,
+      'kiosk-delivery',
+      method.slug === 'local' ? 'Comer aqui' : 'Para llevar'
+    ))
+    .join('');
+  $('#kioskPaymentOptions').innerHTML = state.paymentMethods
+    .map((method) => kioskMethodButton(method, state.paymentMethodId, 'kiosk-payment', kioskPaymentHelper(method)))
+    .join('');
+  $('#kioskCartLines').innerHTML = cart.length ? cart.map(cartLine).join('') : '<div class="empty-state">Agrega productos para empezar.</div>';
+  $('#kioskTotal').textContent = money(cartTotalCents(cart));
+  $('#kioskSubmit').disabled = cart.length === 0;
+}
+
+function updateKioskClock() {
+  const clock = $('#kioskClock');
+  if (!clock) return;
+  clock.textContent = new Intl.DateTimeFormat('es-SV', {
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(new Date());
+}
+
+function kioskTicketModifierLines(item) {
+  const variants = Object.entries(item.variants || {}).map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(value)}`);
+  const extras = (item.extras || []).map((extra) => `+ ${escapeHtml(extra.name)}${extra.priceCents ? ` ${money(extra.priceCents)}` : ''}`);
+  return [...variants, ...extras].join('<br>');
+}
+
+function printKioskTicket(order, ticket = {}) {
+  const businessName = $('[data-business-name]')?.textContent || 'Long Cha';
+  const customerName = ticket.customerName || order.customer?.name || 'Cliente local';
+  const tableLabel = ticket.tableLabel || order.tableLabel || '';
+  $('#ticketPrint').innerHTML = `
+    <div style="text-align:center">
+      <strong>${escapeHtml(businessName)}</strong><br>
+      KIOSKO<br>
+      Pedido ${escapeHtml(order.orderNumber)}<br>
+      ${new Date(order.createdAt || Date.now()).toLocaleString()}
+    </div>
+    <hr>
+    Cliente: ${escapeHtml(customerName)}<br>
+    ${tableLabel ? `Mesa/ref: ${escapeHtml(tableLabel)}<br>` : ''}
+    Entrega: ${escapeHtml(order.deliveryMethod?.name || '')}<br>
+    Pago: ${escapeHtml(order.paymentMethod?.name || '')}<br>
+    <hr>
+    ${(order.items || []).map((item) => `
+      <strong>${item.quantity} x ${escapeHtml(item.productName)}</strong> ${escapeHtml(item.lineTotal || '')}<br>
+      ${kioskTicketModifierLines(item)}
+    `).join('<br>')}
+    <hr>
+    <strong>Total: ${money(order.totalCents)}</strong><br>
+    Estado: ${escapeHtml(order.status || 'Nuevo')}
+  `;
+  window.print();
+}
+
+function openKioskSuccess(order, ticket = {}) {
+  const dialog = $('#kioskSuccessDialog');
+  dialog.innerHTML = `
+    <div class="dialog__body kiosk-success">
+      <img src="/assets/brand/longcha-mark.png" alt="Long Cha">
+      <span class="eyebrow">Pedido enviado</span>
+      <h2>${escapeHtml(order.orderNumber)}</h2>
+      <p>Tu orden ya fue enviada a cocina. Conserva este numero y pasa a caja si falta completar el pago.</p>
+      <div class="kiosk-success-actions">
+        <button class="btn btn--brand" type="button" data-kiosk-print-ticket>Imprimir ticket</button>
+        <button class="btn btn--ghost" type="button" data-kiosk-new-order>Hacer otro pedido</button>
+      </div>
+    </div>
+  `;
+  dialog.onclick = (event) => {
+    if (event.target.closest('[data-kiosk-print-ticket]')) {
+      printKioskTicket(order, ticket);
+      return;
+    }
+    if (!event.target.closest('[data-kiosk-new-order]')) return;
+    dialog.close();
+    $('#kioskCustomerName').value = '';
+    showToast('Listo para un nuevo pedido');
+  };
+  dialog.showModal();
+}
+
+async function submitKioskOrder(state) {
+  const cart = getCart();
+  if (!cart.length) {
+    showToast('Agrega productos antes de enviar.');
+    return;
+  }
+  const form = $('#kioskOrderForm');
+  if (!form.reportValidity()) return;
+  const submit = $('#kioskSubmit');
+  const tableLabel = ($('#kioskTableLabel').value || '').trim();
+  const customerName = ($('#kioskCustomerName').value || '').trim();
+  if (tableLabel) localStorage.setItem(TABLE_KEY, tableLabel);
+  submit.disabled = true;
+  submit.textContent = 'Enviando pedido...';
+  const payload = {
+    customer: {
+      name: customerName,
+      phone: `kiosko-${Date.now()}`,
+      address: '',
+      reference: tableLabel
+    },
+    deliveryMethodId: Number(state.deliveryMethodId),
+    paymentMethodId: Number(state.paymentMethodId),
+    deliveryZoneId: null,
+    tableLabel,
+    paymentStatus: 'Pendiente',
+    notes: 'Pedido creado en kiosko de autoservicio.',
+    items: cart.map((item) => ({
+      productId: item.productId,
+      quantity: item.quantity,
+      variants: item.variants,
+      extras: item.extras,
+      optionSelections: item.optionSelections,
+      notes: item.notes
+    }))
+  };
+  try {
+    const result = await api('/api/orders', { method: 'POST', body: JSON.stringify(payload) });
+    localStorage.setItem(LAST_ORDER_KEY, result.order.orderNumber);
+    localStorage.removeItem(cartStorageKey());
+    renderKioskOrder(state);
+    openKioskSuccess(result.order, { customerName, tableLabel });
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    submit.textContent = 'Enviar pedido a cocina';
+    submit.disabled = getCart().length === 0;
+  }
+}
+
+async function initKiosk() {
+  captureTableFromUrl();
+  const [menu, options] = await Promise.all([
+    api('/api/public/menu'),
+    api('/api/public/checkout-options')
+  ]);
+  const deliveryMethods = kioskDeliveryMethods(options);
+  const paymentMethods = kioskPaymentMethods(options);
+  const state = {
+    menu,
+    deliveryMethods,
+    paymentMethods,
+    category: 'all',
+    search: '',
+    deliveryMethodId: (deliveryMethods.find((method) => method.slug === 'local') || deliveryMethods[0])?.id,
+    paymentMethodId: (paymentMethods.find((method) => method.slug === 'efectivo') || paymentMethods[0])?.id
+  };
+
+  updateBusinessHeader(menu);
+  $('#kioskTableLabel').value = getTableLabel() || 'Kiosko';
+  renderKioskCategories(state);
+  renderKioskProducts(state);
+  renderKioskOrder(state);
+  updateKioskClock();
+  setInterval(updateKioskClock, 30000);
+  setupKioskScreensaver();
+
+  $('#kioskSearch').addEventListener('input', (event) => {
+    state.search = event.target.value.toLowerCase();
+    renderKioskProducts(state);
+  });
+  $('#kioskCategoryChips').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-category]');
+    if (!button) return;
+    state.category = button.dataset.category;
+    renderKioskCategories(state);
+    renderKioskProducts(state);
+  });
+  $('#kioskProducts').addEventListener('click', (event) => {
+    const addButton = event.target.closest('[data-add-product]');
+    if (!addButton) return;
+    const product = state.menu.products.find((item) => item.id === Number(addButton.dataset.addProduct));
+    if (!product) return;
+    openProductDialog(product, {
+      afterAdd: () => {
+        renderKioskOrder(state);
+        showToast('Producto agregado al pedido');
+      }
+    });
+  });
+  $('#kioskOrderPane').addEventListener('click', (event) => {
+    const delivery = event.target.closest('[data-kiosk-delivery]');
+    if (delivery) {
+      state.deliveryMethodId = Number(delivery.dataset.kioskDelivery);
+      renderKioskOrder(state);
+      return;
+    }
+    const payment = event.target.closest('[data-kiosk-payment]');
+    if (payment) {
+      state.paymentMethodId = Number(payment.dataset.kioskPayment);
+      renderKioskOrder(state);
+      return;
+    }
+    const qty = event.target.closest('[data-qty-cart]');
+    if (qty) {
+      const item = getCart().find((cartItem) => cartItem.cartId === qty.dataset.qtyCart);
+      if (!item) return;
+      updateCartItemQuantity(item.cartId, Number(item.quantity || 1) + Number(qty.dataset.qtyDelta || 0));
+      renderKioskOrder(state);
+      return;
+    }
+    const remove = event.target.closest('[data-remove-cart]');
+    if (remove) {
+      saveCart(getCart().filter((item) => item.cartId !== remove.dataset.removeCart));
+      renderKioskOrder(state);
+    }
+  });
+  $('#kioskClearCart').addEventListener('click', () => {
+    localStorage.removeItem(cartStorageKey());
+    renderKioskOrder(state);
+    showToast('Pedido vaciado');
+  });
+  $('#kioskOrderForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitKioskOrder(state);
+  });
+}
+
 async function initStatus() {
   const params = new URLSearchParams(location.search);
   const input = $('#orderNumber');
@@ -895,5 +1261,6 @@ async function loadStatus(orderNumber, connectRealtime = true) {
 
 if (page === 'home') initHome().catch(console.error);
 if (page === 'menu') initMenu().catch((error) => alert(error.message));
+if (page === 'kiosk') initKiosk().catch((error) => alert(error.message));
 if (page === 'checkout') initCheckout().catch((error) => alert(error.message));
 if (page === 'status') initStatus().catch(console.error);

@@ -2999,6 +2999,433 @@ button {
   display: block;
 }
 
+body[data-page="kiosk"] {
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, rgba(20, 110, 67, 0.1), rgba(252, 233, 192, 0.54) 34%, #fffdfa),
+    var(--soft);
+  overflow-x: hidden;
+}
+
+.kiosk-header {
+  min-height: 78px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 22px;
+  border-bottom: 1px solid rgba(20, 110, 67, 0.18);
+  background: rgba(255, 253, 250, 0.94);
+  backdrop-filter: blur(16px);
+  position: sticky;
+  top: 0;
+  z-index: 24;
+}
+
+.kiosk-header__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.kiosk-header__meta strong {
+  min-width: 88px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fffaf0;
+  padding: 10px 12px;
+  text-align: center;
+  font-size: 1.14rem;
+}
+
+.kiosk-layout {
+  width: min(1480px, calc(100% - 28px));
+  margin: 0 auto;
+  padding: 18px 0 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 430px);
+  gap: 18px;
+  align-items: start;
+}
+
+.kiosk-menu-pane,
+.kiosk-order-card {
+  min-width: 0;
+}
+
+.kiosk-hero {
+  border-radius: var(--radius);
+  background:
+    linear-gradient(135deg, rgba(20, 110, 67, 0.98), rgba(43, 43, 43, 0.86)),
+    url("/assets/brand/hanzi-dragon.png");
+  background-size: cover, 420px auto;
+  background-position: center, right -90px center;
+  color: #fff;
+  min-height: 210px;
+  padding: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 170px;
+  gap: 18px;
+  align-items: center;
+  overflow: hidden;
+}
+
+.kiosk-hero h1 {
+  margin: 4px 0 8px;
+  font-size: clamp(2.4rem, 5vw, 4.8rem);
+  line-height: 0.96;
+}
+
+.kiosk-hero p {
+  margin: 0;
+  max-width: 640px;
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 1.1rem;
+  line-height: 1.45;
+}
+
+.kiosk-hero img {
+  width: 170px;
+  height: 170px;
+  object-fit: contain;
+  border-radius: var(--radius);
+  background: var(--cream);
+  padding: 10px;
+}
+
+.kiosk-toolbar {
+  position: sticky;
+  top: 78px;
+  z-index: 18;
+  margin-top: 14px;
+  padding: 12px 0 10px;
+  background: rgba(255, 248, 232, 0.94);
+  backdrop-filter: blur(14px);
+}
+
+.kiosk-toolbar .field {
+  min-height: 56px;
+  font-size: 1.05rem;
+}
+
+.kiosk-chips {
+  padding-bottom: 0;
+}
+
+.kiosk-chips .chip,
+.kiosk-segment,
+.kiosk-submit {
+  min-height: 56px;
+  font-size: 1rem;
+}
+
+.kiosk-section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: end;
+  margin: 16px 0 12px;
+}
+
+.kiosk-section-head h2 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.kiosk-product-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  padding-bottom: 28px;
+}
+
+.kiosk-product-card {
+  min-width: 0;
+}
+
+.kiosk-product-card button {
+  width: 100%;
+  min-height: 276px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 150px minmax(0, 1fr);
+  text-align: left;
+  box-shadow: 0 12px 26px rgba(20, 20, 20, 0.06);
+}
+
+.kiosk-product-card button:active {
+  transform: scale(0.99);
+}
+
+.kiosk-product-card.is-sold-out {
+  opacity: 0.58;
+}
+
+.kiosk-product-card__image {
+  position: relative;
+  display: block;
+  background: #fff2cf;
+}
+
+.kiosk-product-card__image img {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+}
+
+.kiosk-product-card__image em {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  border-radius: 999px;
+  background: var(--gold);
+  color: var(--ink);
+  padding: 6px 9px;
+  font-style: normal;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.kiosk-product-card__body {
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+  align-content: space-between;
+}
+
+.kiosk-product-card__body strong {
+  font-size: 1.04rem;
+  line-height: 1.16;
+}
+
+.kiosk-product-card__body small {
+  color: var(--muted);
+  line-height: 1.32;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.kiosk-product-card__body span {
+  color: var(--brand);
+  font-weight: 900;
+  font-size: 1.08rem;
+}
+
+.kiosk-order-pane {
+  position: sticky;
+  top: 96px;
+}
+
+.kiosk-order-card {
+  border: 1px solid rgba(20, 110, 67, 0.22);
+  border-radius: var(--radius);
+  background: rgba(255, 253, 250, 0.97);
+  box-shadow: 0 18px 44px rgba(20, 20, 20, 0.1);
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.kiosk-order-card label,
+.kiosk-option-block {
+  display: grid;
+  gap: 8px;
+  font-weight: 850;
+}
+
+.kiosk-option-block strong {
+  font-size: 0.94rem;
+}
+
+.kiosk-segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.kiosk-segment {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fffaf0;
+  color: var(--ink);
+  padding: 10px;
+  display: grid;
+  gap: 3px;
+  align-content: center;
+  text-align: left;
+}
+
+.kiosk-segment span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.kiosk-segment.is-active {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+}
+
+.kiosk-segment.is-active span {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.kiosk-cart-lines {
+  max-height: min(38vh, 390px);
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+  padding-right: 2px;
+}
+
+.kiosk-cart-lines .cart-line {
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  padding: 10px 0;
+}
+
+.kiosk-cart-lines .cart-line img {
+  width: 58px;
+  height: 58px;
+}
+
+.kiosk-total {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+}
+
+.kiosk-total span {
+  color: var(--muted);
+  font-weight: 850;
+}
+
+.kiosk-total strong {
+  font-size: 1.8rem;
+  color: var(--brand);
+}
+
+.kiosk-submit {
+  width: 100%;
+}
+
+.kiosk-submit:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.kiosk-success {
+  text-align: center;
+  justify-items: center;
+  padding: 28px;
+}
+
+.kiosk-success img {
+  width: 82px;
+  height: 82px;
+  object-fit: contain;
+}
+
+.kiosk-success h2 {
+  margin: 0;
+  color: var(--brand);
+  font-size: clamp(2rem, 7vw, 3.4rem);
+}
+
+.kiosk-success p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 420px;
+}
+
+.kiosk-success-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.kiosk-screensaver {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  width: 100%;
+  min-height: 100dvh;
+  border: 0;
+  background:
+    linear-gradient(145deg, rgba(20, 110, 67, 0.96), rgba(43, 43, 43, 0.92)),
+    url("/assets/brand/hanzi-dragon.png"),
+    var(--brand);
+  background-size: cover, min(76vw, 760px) auto, cover;
+  background-position: center, center right -90px, center;
+  background-repeat: no-repeat;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 22px;
+  padding: 32px;
+  text-align: center;
+}
+
+.kiosk-screensaver[hidden] {
+  display: none;
+}
+
+.kiosk-screensaver__brand {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+
+.kiosk-screensaver__brand img {
+  width: min(28vw, 170px);
+  height: min(28vw, 170px);
+  object-fit: contain;
+  filter: drop-shadow(0 18px 26px rgba(0, 0, 0, 0.18));
+}
+
+.kiosk-screensaver__brand strong {
+  font-family: "Chillax", "Figtree", ui-sans-serif, system-ui, sans-serif;
+  font-size: clamp(1.6rem, 4vw, 3.2rem);
+  line-height: 1;
+}
+
+.kiosk-screensaver__message {
+  font-family: "Chillax", "Figtree", ui-sans-serif, system-ui, sans-serif;
+  font-size: clamp(4rem, 13vw, 11rem);
+  font-weight: 750;
+  line-height: 0.92;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  max-width: 960px;
+}
+
+.kiosk-screensaver__hint {
+  border: 1px solid rgba(252, 233, 192, 0.44);
+  border-radius: 999px;
+  background: rgba(252, 233, 192, 0.14);
+  min-height: 58px;
+  padding: 0 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: clamp(1rem, 2.2vw, 1.45rem);
+  font-weight: 850;
+}
+
 .login-page {
   min-height: 100vh;
   display: grid;
@@ -3080,7 +3507,8 @@ button {
   .optional-layout,
   .inventory-layout,
   .accounting-layout,
-  .accounting-pro-layout {
+  .accounting-pro-layout,
+  .kiosk-layout {
     grid-template-columns: 1fr;
   }
 
@@ -3118,6 +3546,14 @@ button {
   .checkout-summary {
     position: static;
   }
+
+  .kiosk-order-pane {
+    position: static;
+  }
+
+  .kiosk-product-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -3146,7 +3582,54 @@ button {
   .kds-board,
   .metrics,
   .form-grid,
-  .checks {
+  .checks,
+  .kiosk-product-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .kiosk-header {
+    display: grid;
+    padding: 10px 12px;
+  }
+
+  .kiosk-layout {
+    width: min(100% - 22px, 1180px);
+    padding-top: 12px;
+  }
+
+  .kiosk-hero {
+    grid-template-columns: 1fr;
+    min-height: auto;
+    padding: 18px;
+  }
+
+  .kiosk-hero img {
+    width: 118px;
+    height: 118px;
+  }
+
+  .kiosk-toolbar {
+    top: 0;
+    position: static;
+  }
+
+  .kiosk-product-card button {
+    min-height: 160px;
+    grid-template-columns: 118px minmax(0, 1fr);
+    grid-template-rows: auto;
+  }
+
+  .kiosk-product-card__image img {
+    width: 118px;
+    height: 100%;
+    min-height: 160px;
+  }
+
+  .kiosk-cart-lines {
+    max-height: none;
+  }
+
+  .kiosk-segmented {
     grid-template-columns: 1fr;
   }
 

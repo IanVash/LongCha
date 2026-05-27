@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Kiosko de pedidos</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body data-page="kiosk">
+    <header class="kiosk-header">
+      <a class="brand-lockup" href="/kiosk">
+        <img data-business-logo src="/assets/brand/longcha-mark.png" alt="Logo Long Cha">
+        <div>
+          <strong data-business-name>Kiosko</strong>
+          <span data-open-state>Consultando horario</span>
+        </div>
+      </a>
+      <div class="kiosk-header__meta">
+        <span class="badge">Autoservicio</span>
+        <strong id="kioskClock">--:--</strong>
+      </div>
+    </header>
+
+    <main class="kiosk-layout">
+      <section class="kiosk-menu-pane">
+        <div class="kiosk-hero">
+          <div>
+            <span class="eyebrow">Ordena en tienda</span>
+            <h1 data-business-heading>Long Cha</h1>
+            <p>Elige tu bebida, personaliza toppings y confirma tu pedido para cocina.</p>
+          </div>
+          <img src="/assets/brand/brand-figure-01.png" alt="Bebida Long Cha">
+        </div>
+
+        <div class="kiosk-toolbar">
+          <input class="field" id="kioskSearch" type="search" placeholder="Buscar milk tea, cafe, smoothie...">
+          <div class="chips kiosk-chips" id="kioskCategoryChips"></div>
+        </div>
+
+        <div class="kiosk-section-head">
+          <h2>Menu</h2>
+          <span class="muted" id="kioskProductCount">Cargando productos</span>
+        </div>
+        <div class="kiosk-product-grid" id="kioskProducts"></div>
+      </section>
+
+      <aside class="kiosk-order-pane" id="kioskOrderPane">
+        <form class="kiosk-order-card" id="kioskOrderForm">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Tu pedido</span>
+              <h2>Resumen</h2>
+            </div>
+            <button class="btn btn--ghost btn--small" type="button" id="kioskClearCart">Vaciar</button>
+          </div>
+
+          <label>Nombre para llamar
+            <input class="field" id="kioskCustomerName" name="name" placeholder="Ej. Carlos" required autocomplete="off">
+          </label>
+          <label>Mesa o referencia
+            <input class="field" id="kioskTableLabel" name="tableLabel" placeholder="Kiosko / Mesa 1" required autocomplete="off">
+          </label>
+
+          <div class="kiosk-option-block">
+            <strong>Tipo de pedido</strong>
+            <div class="kiosk-segmented" id="kioskDeliveryOptions"></div>
+          </div>
+
+          <div class="kiosk-option-block">
+            <strong>Pago</strong>
+            <div class="kiosk-segmented" id="kioskPaymentOptions"></div>
+          </div>
+
+          <div class="kiosk-cart-lines" id="kioskCartLines">
+            <div class="empty-state">Agrega productos para empezar.</div>
+          </div>
+
+          <div class="kiosk-total">
+            <span>Total</span>
+            <strong id="kioskTotal">$0.00</strong>
+          </div>
+
+          <button class="btn btn--brand kiosk-submit" type="submit" id="kioskSubmit" disabled>
+            Enviar pedido a cocina
+          </button>
+        </form>
+      </aside>
+    </main>
+
+    <dialog class="dialog" id="productDialog"></dialog>
+    <dialog class="dialog" id="cartDialog"></dialog>
+    <dialog class="dialog kiosk-success-dialog" id="kioskSuccessDialog"></dialog>
+    <button class="kiosk-screensaver" id="kioskScreensaver" type="button" hidden aria-label="Tocar para ordenar">
+      <span class="kiosk-screensaver__brand">
+        <img data-business-logo src="/assets/brand/longcha-mark.png" alt="">
+        <strong data-business-heading>Long Cha</strong>
+      </span>
+      <span class="kiosk-screensaver__message">Ordene aqui</span>
+      <span class="kiosk-screensaver__hint">Toque la pantalla para comenzar</span>
+    </button>
+    <div id="ticketPrint"></div>
+    <div class="toast" id="toast"></div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

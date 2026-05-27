@@ -117,6 +117,7 @@ const mimeTypes = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
+  '.mp3': 'audio/mpeg',
   '.ttf': 'font/ttf',
   '.otf': 'font/otf',
   '.ico': 'image/x-icon'
@@ -1168,6 +1169,7 @@ function serveStatic(req, res, url) {
   const routeMap = {
     '/': 'index.html',
     '/menu': 'menu.html',
+    '/kiosk': 'kiosk.html',
     '/checkout': 'checkout.html',
     '/status': 'status.html',
     '/closed': 'closed.html',

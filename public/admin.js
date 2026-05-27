@@ -4,6 +4,7 @@ const money = (cents) => new Intl.NumberFormat('en-US', { style: 'currency', cur
 const adminPrice = (cents) => `${((Number(cents) || 0) / 100).toFixed(2).replace('.', ',')} US$`;
 const statuses = ['Nuevo', 'Aceptado', 'En preparacion', 'Listo', 'En camino', 'Entregado', 'Cancelado'];
 const availablePermissions = ['*', 'orders:view', 'orders:update', 'orders:kds', 'orders:update-ready', 'orders:view-assigned', 'orders:update-delivered', 'orders:charge', 'payments:update', 'catalog:view', 'reports:view', 'delivery:view', 'audit:view'];
+const ORDER_ALERT_SOUND_URL = '/assets/sounds/new-order-alert.mp3';
 
 const state = {
   user: null,
@@ -17,8 +18,7 @@ const state = {
   orderEvents: null,
   realtimeConnected: false,
   orderAlert: {
-    context: null,
-    timer: null,
+    audio: null,
     active: false
   }
 };
@@ -247,9 +247,7 @@ async function handleRealtimeOrderEvent(event, isNewOrder) {
 
 function setupOrderAlertUnlock() {
   const unlock = () => {
-    const context = getOrderAlertContext();
-    if (context?.state === 'suspended') context.resume().catch(() => {});
-    if (state.orderAlert.active) playOrderAlertTone();
+    if (state.orderAlert.active) playOrderAlertAudio();
   };
   window.addEventListener('pointerdown', unlock, { passive: true });
   window.addEventListener('keydown', unlock);
@@ -261,89 +259,41 @@ function syncNewOrderAlert(currentNewOrders) {
   else stopOrderAlert();
 }
 
-function getOrderAlertContext() {
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) return null;
-  if (!state.orderAlert.context || state.orderAlert.context.state === 'closed') {
-    state.orderAlert.context = new AudioContextClass();
+function getOrderAlertAudio() {
+  if (!state.orderAlert.audio) {
+    const audio = new Audio(ORDER_ALERT_SOUND_URL);
+    audio.loop = true;
+    audio.preload = 'auto';
+    audio.volume = 1;
+    state.orderAlert.audio = audio;
   }
-  return state.orderAlert.context;
+  return state.orderAlert.audio;
 }
 
 function startOrderAlert() {
   if (state.orderAlert.active) return;
   state.orderAlert.active = true;
-  playOrderAlertTone();
-  state.orderAlert.timer = setInterval(playOrderAlertTone, 1600);
+  playOrderAlertAudio();
 }
 
 function stopOrderAlert() {
   state.orderAlert.active = false;
-  if (state.orderAlert.timer) clearInterval(state.orderAlert.timer);
-  state.orderAlert.timer = null;
+  const audio = state.orderAlert.audio;
+  if (!audio) return;
+  audio.pause();
+  audio.currentTime = 0;
 }
 
-function playOrderAlertTone() {
+function playOrderAlertAudio() {
   if (!state.orderAlert.active) return;
   try {
-    const context = getOrderAlertContext();
-    if (!context) return;
-    if (context.state === 'suspended') {
-      context.resume().catch(() => {});
-      return;
-    }
-    const now = context.currentTime;
-    const master = context.createGain();
-    const limiter = context.createDynamicsCompressor();
-    limiter.threshold.setValueAtTime(-10, now);
-    limiter.knee.setValueAtTime(6, now);
-    limiter.ratio.setValueAtTime(14, now);
-    limiter.attack.setValueAtTime(0.003, now);
-    limiter.release.setValueAtTime(0.18, now);
-    master.gain.setValueAtTime(0.95, now);
-    master.connect(limiter);
-    limiter.connect(context.destination);
-
-    [
-      [988, 0, 0.13, 0.34],
-      [1319, 0.16, 0.13, 0.4],
-      [1568, 0.32, 0.16, 0.42],
-      [1319, 0.55, 0.12, 0.34],
-      [1760, 0.72, 0.24, 0.48]
-    ].forEach(([frequency, offset, duration, volume]) => {
-      playOrderAlertNote(context, master, frequency, now + offset, duration, volume);
+    const audio = getOrderAlertAudio();
+    audio.play().catch(() => {
+      /* El navegador puede requerir una interaccion antes de reproducir audio. */
     });
-    setTimeout(() => {
-      master.disconnect();
-      limiter.disconnect();
-    }, 1250);
   } catch {
     /* audio puede requerir gesto del usuario */
   }
-}
-
-function playOrderAlertNote(context, output, frequency, startTime, duration, volume) {
-  const noteGain = context.createGain();
-  noteGain.gain.setValueAtTime(0.0001, startTime);
-  noteGain.gain.exponentialRampToValueAtTime(volume, startTime + 0.012);
-  noteGain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
-  noteGain.connect(output);
-
-  const body = context.createOscillator();
-  body.type = 'triangle';
-  body.frequency.setValueAtTime(frequency, startTime);
-  body.connect(noteGain);
-  body.start(startTime);
-  body.stop(startTime + duration + 0.04);
-
-  const shine = context.createOscillator();
-  shine.type = 'sine';
-  shine.frequency.setValueAtTime(frequency * 2.01, startTime);
-  shine.connect(noteGain);
-  shine.start(startTime + 0.005);
-  shine.stop(startTime + duration * 0.72);
-
-  setTimeout(() => noteGain.disconnect(), (duration + 0.25) * 1000);
 }
 
 async function renderDashboard() {
