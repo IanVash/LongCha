@@ -1735,6 +1735,14 @@ export function listOrders({ status = 'all', search = '', limit = 80, kds = fals
   return rows.map((row) => hydrateOrder(row));
 }
 
+export function listOrdersByCustomerPhone(phone, { limit = 8 } = {}) {
+  const customerPhone = clean(phone, 60);
+  if (!customerPhone) return [];
+  const rows = db.prepare(`${orderBaseQuery('WHERE c.phone = ?')} ORDER BY o.created_at DESC LIMIT ?`)
+    .all(customerPhone, Number(limit));
+  return rows.map((row) => hydrateOrder(row));
+}
+
 export function updateOrderStatus(orderId, status, userId, note = '') {
   if (!ORDER_STATUSES.includes(status)) throw new ValidationError('Estado de pedido no valido.');
   const order = getOrderById(orderId);
@@ -1813,10 +1821,32 @@ export function updateCategory(id, input) {
   return listCategories(true).find((category) => category.id === Number(id));
 }
 
+function deleteProductInternal(productId) {
+  const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(Number(productId));
+  if (!existing) throw new ValidationError('Producto no encontrado.', 404);
+  db.prepare('UPDATE order_items SET product_id = NULL WHERE product_id = ?').run(Number(productId));
+  db.prepare('UPDATE waste_logs SET product_id = NULL WHERE product_id = ?').run(Number(productId));
+  db.prepare('DELETE FROM product_variants WHERE product_id = ?').run(Number(productId));
+  db.prepare('DELETE FROM product_extras WHERE product_id = ?').run(Number(productId));
+  db.prepare('DELETE FROM product_optional_groups WHERE product_id = ?').run(Number(productId));
+  db.prepare('DELETE FROM product_inventory_items WHERE product_id = ?').run(Number(productId));
+  db.prepare('DELETE FROM products WHERE id = ?').run(Number(productId));
+}
+
 export function deleteCategory(id) {
-  const inUse = db.prepare('SELECT COUNT(*) AS total FROM products WHERE category_id = ?').get(Number(id));
-  if (inUse.total > 0) throw new ValidationError('No se puede eliminar una categoria con productos.');
-  db.prepare('DELETE FROM categories WHERE id = ?').run(Number(id));
+  const categoryId = Number(id);
+  const existing = db.prepare('SELECT id FROM categories WHERE id = ?').get(categoryId);
+  if (!existing) throw new ValidationError('Categoria no encontrada.', 404);
+  db.exec('BEGIN');
+  try {
+    const products = db.prepare('SELECT id FROM products WHERE category_id = ?').all(categoryId);
+    products.forEach((product) => deleteProductInternal(product.id));
+    db.prepare('DELETE FROM categories WHERE id = ?').run(categoryId);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function listExtras(includeInactive = false) {
@@ -1905,7 +1935,19 @@ export function updateOptionalGroup(id, input) {
 }
 
 export function deleteOptionalGroup(id) {
-  db.prepare('DELETE FROM optional_groups WHERE id = ?').run(Number(id));
+  const groupId = Number(id);
+  const existing = db.prepare('SELECT id FROM optional_groups WHERE id = ?').get(groupId);
+  if (!existing) throw new ValidationError('Grupo de opcionales no encontrado.', 404);
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM product_optional_groups WHERE group_id = ?').run(groupId);
+    db.prepare('DELETE FROM optional_options WHERE group_id = ?').run(groupId);
+    db.prepare('DELETE FROM optional_groups WHERE id = ?').run(groupId);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function saveOptionalOption(input) {
@@ -1952,7 +1994,10 @@ export function updateOptionalOption(id, input) {
 }
 
 export function deleteOptionalOption(id) {
-  db.prepare('DELETE FROM optional_options WHERE id = ?').run(Number(id));
+  const optionId = Number(id);
+  const existing = db.prepare('SELECT id FROM optional_options WHERE id = ?').get(optionId);
+  if (!existing) throw new ValidationError('Opcional no encontrado.', 404);
+  db.prepare('DELETE FROM optional_options WHERE id = ?').run(optionId);
 }
 
 function normalizeVariants(variants) {
@@ -2086,7 +2131,14 @@ export function updateProduct(id, input) {
 }
 
 export function deleteProduct(id) {
-  db.prepare('DELETE FROM products WHERE id = ?').run(Number(id));
+  db.exec('BEGIN');
+  try {
+    deleteProductInternal(Number(id));
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 function mapPromotion(row) {

@@ -840,6 +840,11 @@ button {
   box-shadow: 0 14px 34px rgba(20, 20, 20, 0.07);
 }
 
+.status-card.is-primary {
+  border-color: rgba(21, 154, 117, 0.42);
+  box-shadow: 0 16px 38px rgba(21, 154, 117, 0.12);
+}
+
 .status-card__head {
   display: flex;
   justify-content: space-between;
@@ -891,6 +896,48 @@ button {
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 14px;
+}
+
+.status-actions--top {
+  margin-top: 0;
+  margin-bottom: 14px;
+}
+
+.status-family-note {
+  border: 1px solid rgba(21, 154, 117, 0.22);
+  border-radius: var(--radius);
+  background: #effaf5;
+  color: #16483b;
+  padding: 12px 14px;
+  display: grid;
+  gap: 3px;
+  margin-bottom: 14px;
+}
+
+.status-family-note span {
+  color: #40554c;
+  font-size: 0.9rem;
+}
+
+.status-orders-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.order-closed-note {
+  border: 1px solid rgba(21, 154, 117, 0.2);
+  border-radius: var(--radius);
+  background: #f4fbf7;
+  color: #16483b;
+  display: grid;
+  gap: 4px;
+  margin-top: 14px;
+  padding: 13px 14px;
+}
+
+.order-closed-note span {
+  color: #40554c;
+  font-size: 0.9rem;
 }
 
 .page-grid {
@@ -1459,6 +1506,23 @@ button {
   margin-top: 12px;
 }
 
+.order-modifiers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.order-modifiers span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f7faf8;
+  color: #40554c;
+  padding: 5px 8px;
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+
 .total-box {
   display: grid;
   gap: 8px;
@@ -1658,6 +1722,60 @@ button {
   margin: 0;
   padding-left: 18px;
   line-height: 1.55;
+}
+
+.kds-items {
+  display: grid;
+  gap: 10px;
+}
+
+.kds-item {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.kds-item__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: start;
+}
+
+.kds-item__head strong {
+  font-size: 1rem;
+}
+
+.kds-item__head span {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.76rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.kds-modifiers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.kds-modifiers span {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 6px 8px;
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
+.kds-order-note {
+  margin: 0;
+  border-left: 3px solid var(--gold);
+  padding-left: 10px;
+  color: rgba(255, 255, 255, 0.88);
 }
 
 .inventory-table,

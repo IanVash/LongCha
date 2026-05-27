@@ -1,6 +1,7 @@
 const CART_KEY = 'qr-food-pos-cart-v1';
 const LAST_ORDER_KEY = 'qr-food-pos-last-order';
 const LAST_WHATSAPP_KEY = 'qr-food-pos-last-whatsapp-url';
+const CUSTOMER_ORDERS_KEY = 'qr-food-pos-customer-orders';
 const TABLE_KEY = 'qr-food-pos-table';
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -111,6 +112,18 @@ function getTableLabel() {
 
 function whatsappStorageKey(orderNumber) {
   return `${LAST_WHATSAPP_KEY}:${orderNumber}`;
+}
+
+function rememberCustomerOrder(orderNumber) {
+  let orders = [];
+  try {
+    orders = JSON.parse(localStorage.getItem(CUSTOMER_ORDERS_KEY) || '[]');
+  } catch {
+    orders = [];
+  }
+  orders = orders.filter((item) => item && item !== orderNumber);
+  orders.unshift(orderNumber);
+  localStorage.setItem(CUSTOMER_ORDERS_KEY, JSON.stringify(orders.slice(0, 12)));
 }
 
 function captureTableFromUrl() {
@@ -571,6 +584,7 @@ async function initCheckout() {
     try {
       const result = await api('/api/orders', { method: 'POST', body: JSON.stringify(payload) });
       localStorage.setItem(LAST_ORDER_KEY, result.order.orderNumber);
+      rememberCustomerOrder(result.order.orderNumber);
       if (result.whatsappUrl) {
         localStorage.setItem(whatsappStorageKey(result.order.orderNumber), result.whatsappUrl);
       }
@@ -649,12 +663,48 @@ function closeStatusEvents() {
 }
 
 function renderStatus(order) {
+  const allTrackedOrders = trackedStatusOrders(order);
+  const relatedOrders = visibleStatusOrders(order);
+  const whatsappUrl = order.whatsappUrl || localStorage.getItem(whatsappStorageKey(order.orderNumber)) || '';
+  $('#statusResult').innerHTML = `
+    <div class="status-actions status-actions--top">
+      ${whatsappUrl ? `<a class="btn btn--brand" href="${escapeHtml(whatsappUrl)}" target="_blank" rel="noreferrer">Confirmar por WhatsApp</a>` : ''}
+      <a class="btn btn--soft" href="/menu">Hacer otro pedido</a>
+    </div>
+    ${relatedOrders.length > 1 ? `
+      <div class="status-family-note">
+        <strong>${relatedOrders.length} pedidos encontrados para este cliente</strong>
+        <span>Se muestran solo los pedidos activos para que puedas seguirlos sin cambiar de pantalla.</span>
+      </div>
+    ` : ''}
+    ${relatedOrders.length ? `
+      <div class="status-orders-stack">
+        ${relatedOrders.map((item, index) => statusOrderCard(item, index === 0)).join('')}
+      </div>
+    ` : `
+      <div class="order-closed-note">
+        <strong>No hay pedidos activos para mostrar</strong>
+        <span>${allTrackedOrders.some((item) => item.status === 'Entregado')
+          ? 'Los pedidos entregados se archivan automaticamente en esta ventana.'
+          : 'Cuando hagas un pedido nuevo, aparecera aqui para darle seguimiento.'}</span>
+      </div>
+    `}
+  `;
+  $('#statusTimeline').innerHTML = order.history.map((entry) => `
+    <div class="timeline__item">
+      <strong>${escapeHtml(entry.status)}</strong>
+      <span class="muted">${new Date(entry.createdAt).toLocaleString()}</span>
+    </div>
+  `).join('');
+}
+
+function statusOrderCard(order, isPrimary = false) {
   const progress = ['Nuevo', 'Aceptado', 'En preparacion', 'Listo', order.deliveryMethod?.slug === 'delivery' ? 'En camino' : '', 'Entregado']
     .filter(Boolean);
   const currentIndex = progress.indexOf(order.status);
-  const whatsappUrl = order.whatsappUrl || localStorage.getItem(whatsappStorageKey(order.orderNumber)) || '';
-  $('#statusResult').innerHTML = `
-    <div class="status-card">
+  const isDelivered = order.status === 'Entregado';
+  return `
+    <div class="status-card ${isPrimary ? 'is-primary' : ''}">
       <div class="status-card__head">
         <div>
           <span class="eyebrow">Pedido ${escapeHtml(order.orderNumber)}</span>
@@ -670,12 +720,6 @@ function renderStatus(order) {
         </div>
       </div>
       <div class="status-payment">Pago: <strong>${escapeHtml(order.paymentStatus || 'Pendiente')}</strong></div>
-      ${whatsappUrl ? `
-        <div class="status-actions">
-          <a class="btn btn--brand" href="${escapeHtml(whatsappUrl)}" target="_blank" rel="noreferrer">Confirmar por WhatsApp</a>
-          <a class="btn btn--soft" href="/menu">Hacer otro pedido</a>
-        </div>
-      ` : ''}
       <div class="status-progress">
         ${progress.map((step, index) => `
           <div class="status-step ${currentIndex >= index ? 'is-done' : ''}">
@@ -684,24 +728,25 @@ function renderStatus(order) {
           </div>
         `).join('')}
       </div>
-      <div class="cart-lines" style="margin-top:14px">
-        ${order.items.map((item) => `
-          <div class="price-row">
-            <span>${item.quantity}x ${escapeHtml(item.productName)}</span>
-            <strong>${money(Math.round(item.lineTotal * 100))}</strong>
-          </div>
-        `).join('')}
-      </div>
+      ${isDelivered ? `
+        <div class="order-closed-note">
+          <strong>Pedido entregado</strong>
+          <span>El detalle de productos ya no se muestra en esta ventana.</span>
+        </div>
+      ` : `
+        <div class="cart-lines" style="margin-top:14px">
+          ${order.items.map((item) => `
+            <div class="price-row">
+              <span>${item.quantity}x ${escapeHtml(item.productName)}</span>
+              <strong>${money(Math.round(item.lineTotal * 100))}</strong>
+            </div>
+          `).join('')}
+        </div>
+      `}
       ${order.discountCents ? `<div class="price-row"><span>Descuento ${escapeHtml(order.couponCode || '')}</span><span>-${money(order.discountCents)}</span></div>` : ''}
       <div class="price-row" style="margin-top:14px"><strong>Total</strong><strong>${money(order.totalCents)}</strong></div>
     </div>
   `;
-  $('#statusTimeline').innerHTML = order.history.map((entry) => `
-    <div class="timeline__item">
-      <strong>${escapeHtml(entry.status)}</strong>
-      <span class="muted">${new Date(entry.createdAt).toLocaleString()}</span>
-    </div>
-  `).join('');
 }
 
 function scheduleStatusFallback(orderNumber) {
@@ -709,10 +754,32 @@ function scheduleStatusFallback(orderNumber) {
   statusPollTimer = setTimeout(() => loadStatus(orderNumber, false), 7000);
 }
 
-function connectOrderStatusEvents(orderNumber, currentStatus) {
+function trackedStatusOrders(order) {
+  const seen = new Set();
+  return [order, ...((order && order.relatedOrders) || [])].filter((item) => {
+    if (!item?.orderNumber || seen.has(item.orderNumber)) return false;
+    seen.add(item.orderNumber);
+    return true;
+  });
+}
+
+function visibleStatusOrders(order) {
+  return trackedStatusOrders(order).filter((item) => item.status !== 'Entregado');
+}
+
+function hasOpenTrackedOrders(order) {
+  return trackedStatusOrders(order).some((item) => !isFinalStatus(item.status));
+}
+
+function hasRelatedTrackedOrders(order) {
+  return visibleStatusOrders(order).length > 1;
+}
+
+function connectOrderStatusEvents(orderNumber, orderSnapshot) {
+  const currentStatus = orderSnapshot?.status || '';
   closeStatusEvents();
   if (!('EventSource' in window) || isFinalStatus(currentStatus)) {
-    if (!isFinalStatus(currentStatus)) scheduleStatusFallback(orderNumber);
+    if (hasOpenTrackedOrders(orderSnapshot)) scheduleStatusFallback(orderNumber);
     return;
   }
   statusEvents = new EventSource(`/api/public/order-events?order=${encodeURIComponent(orderNumber)}`);
@@ -720,7 +787,10 @@ function connectOrderStatusEvents(orderNumber, currentStatus) {
     const data = JSON.parse(event.data);
     if (!data.order) return;
     renderStatus(data.order);
-    if (isFinalStatus(data.order.status)) closeStatusEvents();
+    if (hasOpenTrackedOrders(data.order) && hasRelatedTrackedOrders(data.order)) {
+      scheduleStatusFallback(orderNumber);
+    }
+    if (isFinalStatus(data.order.status) && !hasOpenTrackedOrders(data.order)) closeStatusEvents();
   };
   statusEvents.addEventListener('order.snapshot', handleEvent);
   statusEvents.addEventListener('order.created', handleEvent);
@@ -734,9 +804,12 @@ function connectOrderStatusEvents(orderNumber, currentStatus) {
 async function loadStatus(orderNumber, connectRealtime = true) {
   try {
     const order = await api(`/api/public/order-status?order=${encodeURIComponent(orderNumber)}`);
+    rememberCustomerOrder(order.orderNumber);
     renderStatus(order);
-    if (connectRealtime) connectOrderStatusEvents(orderNumber, order.status);
-    if (!connectRealtime && !isFinalStatus(order.status)) scheduleStatusFallback(orderNumber);
+    if (connectRealtime) connectOrderStatusEvents(orderNumber, order);
+    if (hasOpenTrackedOrders(order) && (!connectRealtime || hasRelatedTrackedOrders(order))) {
+      scheduleStatusFallback(orderNumber);
+    }
   } catch (error) {
     closeStatusEvents();
     $('#statusResult').innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;

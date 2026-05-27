@@ -436,6 +436,7 @@ function orderCard(order) {
 function orderDetail(order) {
   const statusWhatsappUrl = order.whatsappStatusUrl || customerStatusWhatsAppUrl(order);
   const drivers = state.deliveryConfig?.drivers || [];
+  const isDelivered = order.status === 'Entregado';
   return `
     <div class="order-detail-head">
       <div>
@@ -451,9 +452,16 @@ function orderDetail(order) {
       ${order.customer.address ? `<div class="muted">${escapeHtml(order.customer.address)}</div>` : ''}
       ${order.customer.reference ? `<div class="muted">${escapeHtml(order.customer.reference)}</div>` : ''}
     </div>
-    <div class="cart-lines cart-lines--detail">
-      ${order.items.map(orderItemLine).join('')}
-    </div>
+    ${isDelivered ? `
+      <div class="order-closed-note">
+        <strong>Pedido entregado</strong>
+        <span>El detalle de productos queda oculto en esta vista. Puedes consultar el historial o reimprimir el ticket si necesitas respaldo.</span>
+      </div>
+    ` : `
+      <div class="cart-lines cart-lines--detail">
+        ${order.items.map(orderItemLine).join('')}
+      </div>
+    `}
     ${order.notes ? `<p><strong>Notas:</strong> ${escapeHtml(order.notes)}</p>` : ''}
     <div class="total-box">
       <div class="price-row"><span>Subtotal</span><span>${money(order.subtotalCents)}</span></div>
@@ -517,16 +525,46 @@ function customerStatusWhatsAppUrl(order) {
 }
 
 function orderItemLine(item) {
-  const variants = Object.entries(item.variants || {}).map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(value)}`).join(', ');
-  const extras = (item.extras || []).map((extra) => `${escapeHtml(extra.name)} +${money(extra.priceCents)}`).join(', ');
+  const modifiers = itemModifiers(item, { showPrices: true });
   return `
     <div>
       <div class="price-row"><strong>${item.quantity}x ${escapeHtml(item.productName)}</strong><strong>${money(item.lineTotalCents)}</strong></div>
-      ${variants ? `<div class="muted">${variants}</div>` : ''}
-      ${extras ? `<div class="muted">${extras}</div>` : ''}
-      ${item.notes ? `<div class="muted">${escapeHtml(item.notes)}</div>` : ''}
+      ${modifiers.length ? `<div class="order-modifiers">${modifiers.map((modifier) => `<span>${escapeHtml(modifier)}</span>`).join('')}</div>` : ''}
     </div>
   `;
+}
+
+function itemModifiers(item, { showPrices = false } = {}) {
+  const modifiers = [];
+  const groupedExtras = (item.extras || []).filter((extra) => extra.groupName);
+  const plainExtras = (item.extras || []).filter((extra) => !extra.groupName);
+  const selectedGroupNames = new Set(groupedExtras
+    .map((extra) => normalizedModifierName(extra.groupName || ''))
+    .filter(Boolean));
+  const selectedOptionNames = new Set(groupedExtras
+    .map((extra) => normalizedModifierName(extra.name || ''))
+    .filter(Boolean));
+  Object.entries(item.variants || {}).forEach(([key, value]) => {
+    if (value && !selectedGroupNames.has(normalizedModifierName(key))) modifiers.push(`${key}: ${value}`);
+  });
+  const addExtraModifier = (extra) => {
+    const price = showPrices && Number(extra.priceCents || 0) > 0 ? ` +${money(extra.priceCents)}` : '';
+    modifiers.push(`${extra.groupName ? `${extra.groupName}: ` : 'Extra: '}${extra.name}${price}`);
+  };
+  groupedExtras.forEach(addExtraModifier);
+  plainExtras
+    .filter((extra) => !selectedOptionNames.has(normalizedModifierName(extra.name)))
+    .forEach(addExtraModifier);
+  if (item.notes) modifiers.push(`Nota: ${item.notes}`);
+  return modifiers;
+}
+
+function normalizedModifierName(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
 }
 
 function handleOrdersClick(event) {
@@ -641,13 +679,26 @@ function kdsCard(order) {
         </div>
         <span class="badge">${minutes} min</span>
       </header>
-      <ul>${order.items.map((item) => `<li>${item.quantity}x ${escapeHtml(item.productName)}${item.notes ? ` - ${escapeHtml(item.notes)}` : ''}</li>`).join('')}</ul>
-      ${order.notes ? `<p>${escapeHtml(order.notes)}</p>` : ''}
+      <div class="kds-items">${order.items.map(kdsItemLine).join('')}</div>
+      ${order.notes ? `<p class="kds-order-note"><strong>Notas generales:</strong> ${escapeHtml(order.notes)}</p>` : ''}
       <div class="actions-row">
         ${order.status !== 'En preparacion' ? `<button class="btn btn--soft btn--small" type="button" data-kds-status="En preparacion" data-order-id="${order.id}">Preparar</button>` : ''}
         ${order.status !== 'Listo' ? `<button class="btn btn--brand btn--small" type="button" data-kds-status="Listo" data-order-id="${order.id}">Listo</button>` : ''}
       </div>
     </article>
+  `;
+}
+
+function kdsItemLine(item) {
+  const modifiers = itemModifiers(item);
+  return `
+    <div class="kds-item">
+      <div class="kds-item__head">
+        <strong>${item.quantity}x ${escapeHtml(item.productName)}</strong>
+        ${modifiers.length ? `<span>${modifiers.length} opciones</span>` : ''}
+      </div>
+      ${modifiers.length ? `<div class="kds-modifiers">${modifiers.map((modifier) => `<span>${escapeHtml(modifier)}</span>`).join('')}</div>` : ''}
+    </div>
   `;
 }
 
@@ -825,6 +876,7 @@ function productAdminRow(product) {
             Ver opciones
           </button>
           <button class="btn btn--soft btn--small" type="button" data-edit-product="${product.id}">Editar</button>
+          <button class="btn btn--danger btn--small" type="button" data-delete-product="${product.id}">Eliminar</button>
         </div>
       </div>
       <div class="product-row-side">
@@ -1027,9 +1079,12 @@ function productTableClick(event) {
   }
 
   const del = event.target.closest('[data-delete-product]');
-  if (del && confirm('Eliminar producto?')) {
+  if (del && confirm('Eliminar producto? El historial de pedidos se conservara.')) {
     api(`/api/admin/products/${del.dataset.deleteProduct}`, { method: 'DELETE' })
-      .then(() => renderProductsAdmin())
+      .then(() => {
+        showToast('Producto eliminado');
+        renderProductsAdmin();
+      })
       .catch((error) => showToast(error.message));
   }
 }
@@ -1136,9 +1191,14 @@ async function renderCategoriesAdmin() {
       const category = data.categories.find((item) => item.id === Number(edit.dataset.editCategory));
       fillCategoryForm(category);
     }
-    if (del && confirm('Eliminar categoria?')) {
-      await api(`/api/admin/categories/${del.dataset.deleteCategory}`, { method: 'DELETE' });
-      renderCategoriesAdmin();
+    if (del && confirm('Eliminar categoria? Tambien se eliminaran sus productos del catalogo y se conservara el historial de pedidos.')) {
+      try {
+        await api(`/api/admin/categories/${del.dataset.deleteCategory}`, { method: 'DELETE' });
+        showToast('Categoria eliminada');
+        renderCategoriesAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
     }
   };
 }
@@ -1188,10 +1248,14 @@ async function renderExtrasAdmin() {
     if (createOption) openOptionDialog({ groupId: Number(createOption.dataset.createOption) });
     if (editGroup) openGroupDialog(groups.find((group) => group.id === Number(editGroup.dataset.editGroup)));
     if (deleteGroup && confirm('Eliminar grupo de opcionales? Se desvinculara de los productos.')) {
-      await api(`/api/admin/optional-groups/${deleteGroup.dataset.deleteGroup}`, { method: 'DELETE' });
-      sessionStorage.removeItem('selectedOptionalGroupId');
-      showToast('Grupo eliminado');
-      renderExtrasAdmin();
+      try {
+        await api(`/api/admin/optional-groups/${deleteGroup.dataset.deleteGroup}`, { method: 'DELETE' });
+        sessionStorage.removeItem('selectedOptionalGroupId');
+        showToast('Grupo eliminado');
+        renderExtrasAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
     }
     if (editOption) {
       const option = (selected?.options || []).find((item) => item.id === Number(editOption.dataset.editOption));
@@ -1206,9 +1270,13 @@ async function renderExtrasAdmin() {
       renderExtrasAdmin();
     }
     if (deleteOption && confirm('Eliminar opcional?')) {
-      await api(`/api/admin/optional-options/${deleteOption.dataset.deleteOption}`, { method: 'DELETE' });
-      showToast('Opcional eliminado');
-      renderExtrasAdmin();
+      try {
+        await api(`/api/admin/optional-options/${deleteOption.dataset.deleteOption}`, { method: 'DELETE' });
+        showToast('Opcional eliminado');
+        renderExtrasAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
     }
   });
 }

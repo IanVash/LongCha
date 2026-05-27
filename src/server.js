@@ -39,6 +39,7 @@ import {
   listNotificationLogs,
   listOptionalGroups,
   listOrders,
+  listOrdersByCustomerPhone,
   listPromotions,
   listRoles,
   listUsers,
@@ -539,7 +540,7 @@ function canChangeStatus(user, status) {
   );
 }
 
-function cleanOrderForPublic(order) {
+function cleanOrderForPublic(order, { includeRelated = true } = {}) {
   if (!order) return null;
   const business = getBusiness();
   const etaMinutes = order.deliveryMethod.slug === 'delivery'
@@ -549,7 +550,7 @@ function cleanOrderForPublic(order) {
       : business.prepPickupMinutes;
   const whatsappPhone = business.whatsappPhone.replace(/\D/g, '');
   const whatsappMessage = formatOrderForWhatsApp(order);
-  return {
+  const publicOrder = {
     orderNumber: order.orderNumber,
     status: order.status,
     etaMinutes,
@@ -576,6 +577,11 @@ function cleanOrderForPublic(order) {
       lineTotal: item.lineTotal
     }))
   };
+  if (includeRelated) {
+    publicOrder.relatedOrders = listOrdersByCustomerPhone(order.customer.phone, { limit: 8 })
+      .map((relatedOrder) => cleanOrderForPublic(relatedOrder, { includeRelated: false }));
+  }
+  return publicOrder;
 }
 
 function withAdminOrderLinks(order) {
