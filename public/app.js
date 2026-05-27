@@ -274,60 +274,53 @@ function productFormTotalCents(product, formElement) {
 
 function openProductDialog(product) {
   const dialog = $('#productDialog');
+  dialog.className = 'dialog dialog--customizer';
   const variants = publicVariants(product);
   const optionGroups = publicOptionalGroups(product);
   const extras = publicExtras(product);
   dialog.innerHTML = `
-    <form method="dialog" class="dialog__body product-dialog-form" id="productForm">
-      <div class="product-dialog-hero">
-        <img src="${escapeHtml(product.imageUrl)}" alt="${escapeHtml(product.name)}">
-        <button class="icon-btn product-dialog-close" type="button" data-close-dialog>&times;</button>
+    <form method="dialog" class="dialog__body product-dialog-form product-customizer" id="productForm">
+      <div class="customizer-topbar">
+        <button class="icon-btn customizer-close" type="button" data-close-dialog aria-label="Cerrar">&times;</button>
         <div>
-          ${product.featured ? '<span class="badge badge--hot">Popular</span>' : ''}
+          <span class="eyebrow">Personaliza tu pedido</span>
           <h2>${escapeHtml(product.name)}</h2>
-          <p>${escapeHtml(product.description)}</p>
         </div>
       </div>
+      ${product.featured ? '<div class="customizer-ribbon">Favorito Long Cha</div>' : ''}
+      <section class="customizer-product-summary">
+        <img src="${escapeHtml(product.imageUrl)}" alt="${escapeHtml(product.name)}">
+        <div>
+          <p>${escapeHtml(product.description || 'Bebida preparada al momento con el sello de Long Cha.')}</p>
+          <span>Personaliza tamano, azucar, hielo, leche y toppings.</span>
+        </div>
+      </section>
       <div class="product-dialog-content">
-        ${variants.map((variant) => `
-          <label class="option-card">
-            <span>${escapeHtml(variant.name)}${variant.required ? ' *' : ''}</span>
-            <select class="select" name="variant:${escapeHtml(variant.name)}" ${variant.required ? 'required' : ''}>
-              ${variant.options.map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}
-            </select>
-          </label>
-        `).join('')}
-      ${optionGroups.length ? `
-        <section class="dialog-section">
-          <strong>Personaliza tu pedido</strong>
-          <div class="option-list">
-            ${optionGroups.map((group) => optionalGroupControl(group)).join('')}
-          </div>
-        </section>
-      ` : ''}
+        ${variants.map((variant, index) => variantGroupControl(variant, index)).join('')}
+        ${optionGroups.map((group) => optionalGroupControl(group)).join('')}
       ${extras.length ? `
-        <section class="dialog-section">
-          <strong>Toppings y extras</strong>
-          <div class="option-list">
-            ${extras.map((extra) => `
-              <label class="option-row">
-                <input type="checkbox" name="extra" value="${extra.id}">
-                <span>${escapeHtml(extra.name)}</span>
-                <strong>+${money(extra.priceCents)}</strong>
-              </label>
-            `).join('')}
+        <section class="customizer-group">
+          <legend>Toppings y extras</legend>
+          <div class="customizer-option-grid">
+            ${extras.map((extra) => extraOptionTile(extra)).join('')}
           </div>
         </section>
       ` : ''}
-        <label class="dialog-section">Notas especiales<textarea class="textarea" name="notes" placeholder="Menos azucar, sin hielo, separar topping..."></textarea></label>
-        <label class="quantity-field">Cantidad<input class="field" name="quantity" type="number" min="1" max="99" value="1"></label>
+        <label class="dialog-section customizer-notes">
+          <strong>Notas especiales</strong>
+          <textarea class="textarea" name="notes" placeholder="Menos azucar, sin hielo, separar topping..."></textarea>
+        </label>
       </div>
       <div class="product-dialog-action">
-        <div>
-          <span class="muted">Total</span>
-          <strong id="productDialogTotal">${money(product.basePriceCents)}</strong>
+        <div class="customizer-qty" aria-label="Cantidad">
+          <button type="button" data-dialog-qty="-1">-</button>
+          <input name="quantity" type="number" min="1" max="99" value="1" aria-label="Cantidad">
+          <button type="button" data-dialog-qty="1">+</button>
         </div>
-        <button class="btn btn--brand" type="submit">Agregar al carrito</button>
+        <button class="btn btn--brand customizer-submit" type="submit">
+          <span>Agregar al carrito</span>
+          <strong id="productDialogTotal">${money(product.basePriceCents)}</strong>
+        </button>
       </div>
     </form>
   `;
@@ -338,6 +331,25 @@ function openProductDialog(product) {
   };
   productForm.addEventListener('input', updateTotal);
   productForm.addEventListener('change', updateTotal);
+  productForm.addEventListener('click', (event) => {
+    const qty = event.target.closest('[data-dialog-qty]');
+    if (!qty) return;
+    const input = productForm.elements.quantity;
+    input.value = Math.max(1, Math.min(99, Number(input.value || 1) + Number(qty.dataset.dialogQty || 0)));
+    updateTotal();
+  });
+  productForm.addEventListener('change', (event) => {
+    const checkbox = event.target.closest('input[type="checkbox"][data-max-select]');
+    if (!checkbox || !checkbox.checked) return;
+    const max = Number(checkbox.dataset.maxSelect || 0);
+    if (!max) return;
+    const checked = $$(`input[name="${checkbox.name}"]:checked`, productForm);
+    if (checked.length > max) {
+      checkbox.checked = false;
+      alert(`Solo puedes seleccionar ${max} opcion(es) en este grupo.`);
+      updateTotal();
+    }
+  });
   productForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -371,24 +383,92 @@ function openProductDialog(product) {
     dialog.close();
     openCartDialog();
   });
+  updateTotal();
   dialog.showModal();
+}
+
+function variantGroupControl(variant, index) {
+  return `
+    <fieldset class="customizer-group">
+      <legend>${escapeHtml(variant.name)}${variant.required ? ' *' : ''}</legend>
+      <div class="customizer-option-grid">
+        ${variant.options.map((option, optionIndex) => `
+          <label class="customizer-option-tile">
+            <input type="radio" name="variant:${escapeHtml(variant.name)}" value="${escapeHtml(option)}" ${variant.required ? 'required' : ''} ${optionIndex === 0 ? 'checked' : ''}>
+            <span class="customizer-option-icon">${optionIcon(variant.name, option)}</span>
+            <span class="customizer-option-label">${escapeHtml(option)}</span>
+          </label>
+        `).join('')}
+      </div>
+    </fieldset>
+  `;
 }
 
 function optionalGroupControl(group) {
   const inputType = group.maxSelect === 1 ? 'radio' : 'checkbox';
   return `
-    <fieldset class="optional-card">
-      <legend><strong>${escapeHtml(group.name)}</strong>${group.required ? ' *' : ''}</legend>
-      ${group.options.map((option) => `
-        <label class="option-row">
-          <input type="${inputType}" name="optional:${group.id}" value="${option.id}" ${group.required && inputType === 'radio' ? 'required' : ''}>
-          <span>${escapeHtml(option.name)}</span>
-          ${option.priceCents ? `<strong>+${money(option.priceCents)}</strong>` : '<strong></strong>'}
+    <fieldset class="customizer-group">
+      <legend>${escapeHtml(group.name)}${group.required ? ' *' : ''}</legend>
+      <div class="customizer-option-grid">
+      ${group.options.map((option, optionIndex) => `
+        <label class="customizer-option-tile">
+          <input type="${inputType}" name="optional:${group.id}" value="${option.id}" ${group.required && inputType === 'radio' ? 'required' : ''} ${group.required && inputType === 'radio' && optionIndex === 0 ? 'checked' : ''} ${inputType === 'checkbox' ? `data-max-select="${group.maxSelect || 0}"` : ''}>
+          <span class="customizer-option-icon">${optionIcon(group.name, option.name)}</span>
+          <span class="customizer-option-label">${escapeHtml(option.name)}</span>
+          ${option.priceCents ? `<span class="customizer-option-price">+${money(option.priceCents)}</span>` : ''}
         </label>
       `).join('')}
+      </div>
       ${group.maxSelect > 1 ? `<div class="muted">Maximo ${group.maxSelect} opciones</div>` : ''}
     </fieldset>
   `;
+}
+
+function extraOptionTile(extra) {
+  return `
+    <label class="customizer-option-tile">
+      <input type="checkbox" name="extra" value="${extra.id}">
+      <span class="customizer-option-icon">${optionIcon('extras', extra.name)}</span>
+      <span class="customizer-option-label">${escapeHtml(extra.name)}</span>
+      <span class="customizer-option-price">+${money(extra.priceCents)}</span>
+    </label>
+  `;
+}
+
+function optionIcon(groupName, optionName = '') {
+  const text = normalizedName(`${groupName} ${optionName}`);
+  if (text.includes('azucar') || text.includes('sugar')) {
+    if (text.includes('no ') || text.includes('0%')) return iconSvg('none');
+    if (text.includes('extra')) return iconSvg('sugar-cubes');
+    return iconSvg('sugar');
+  }
+  if (text.includes('hielo') || text.includes('ice')) {
+    if (text.includes('sin') || text.includes('no ice')) return iconSvg('snow');
+    if (text.includes('hot') || text.includes('warm') || text.includes('caliente')) return iconSvg('hot');
+    return iconSvg('ice');
+  }
+  if (text.includes('caliente') || text.includes('hot') || text.includes('warm')) return iconSvg('hot');
+  if (text.includes('tamano') || text.includes('size') || text.includes('oz') || text.includes(' m') || text.includes(' l')) return iconSvg('cup');
+  if (text.includes('leche') || text.includes('milk') || text.includes('avena') || text.includes('oat')) return iconSvg(text.includes('oat') || text.includes('avena') ? 'oat' : 'milk');
+  if (text.includes('boba') || text.includes('topping') || text.includes('extra') || text.includes('jelly')) return iconSvg('boba');
+  return iconSvg('plus');
+}
+
+function iconSvg(type) {
+  const icons = {
+    milk: '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M11 3h10l-1 6 3 5v14H9V14l3-5-1-6z"/><path d="M12 14h8"/><path d="M16 19c2 2 3 3.5 3 5a3 3 0 0 1-6 0c0-1.5 1-3 3-5z"/></svg>',
+    oat: '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M11 4h10l-1 6 3 5v13H9V15l3-5-1-6z"/><path d="M20 23c5-5 8-2 8-2s-2 5-8 4"/><path d="M18 25c-3-5-7-4-7-4s1 5 7 5"/></svg>',
+    cup: '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 5h14l-2 23H11L9 5z"/><path d="M12 18c3 2 6 2 9 0"/></svg>',
+    ice: '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 8l7-2 3 7-7 2-3-7z"/><path d="M17 9l7 2-2 7-7-2 2-7z"/><path d="M11 18l7-2 3 7-7 2-3-7z"/></svg>',
+    snow: '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 5v22"/><path d="M7 10l18 12"/><path d="M25 10L7 22"/><path d="M12 7l4 4 4-4"/><path d="M12 25l4-4 4 4"/></svg>',
+    hot: '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M10 25c-2-4 2-5 0-9"/><path d="M16 25c-2-4 2-5 0-9"/><path d="M22 25c-2-4 2-5 0-9"/><path d="M9 9c5-3 9-3 14 0"/></svg>',
+    sugar: '<svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="9" cy="12" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="21" cy="12" r="2"/><circle cx="9" cy="20" r="2"/><circle cx="15" cy="20" r="2"/><circle cx="21" cy="20" r="2"/></svg>',
+    'sugar-cubes': '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 18l6-3 6 3-6 4-6-4z"/><path d="M14 12l6-3 6 3-6 4-6-4z"/><path d="M13 22l6-3 6 3-6 4-6-4z"/></svg>',
+    none: '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 8h16v16H8z"/><path d="M8 24L24 8"/></svg>',
+    boba: '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M10 5h12l-2 22h-8L10 5z"/><circle cx="14" cy="20" r="2"/><circle cx="19" cy="22" r="2"/><circle cx="16" cy="26" r="2"/></svg>',
+    plus: '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 7v18"/><path d="M7 16h18"/></svg>'
+  };
+  return icons[type] || icons.plus;
 }
 
 function collectOptionSelections(product, form) {
