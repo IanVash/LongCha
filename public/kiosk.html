@@ -41,7 +41,7 @@
       </div>
     </section>
 
-    <main class="kiosk-layout" id="kioskMain" hidden>
+    <main class="kiosk-layout kiosk-layout--menu-only" id="kioskMain" hidden>
       <section class="kiosk-menu-pane">
         <div class="kiosk-hero">
           <div>
@@ -63,52 +63,23 @@
         </div>
         <div class="kiosk-product-grid" id="kioskProducts"></div>
       </section>
-
-      <aside class="kiosk-order-pane" id="kioskOrderPane">
-        <form class="kiosk-order-card" id="kioskOrderForm">
-          <div class="panel-head">
-            <div>
-              <span class="eyebrow">Tu pedido</span>
-              <h2>Resumen</h2>
-            </div>
-            <button class="btn btn--ghost btn--small" type="button" id="kioskClearCart">Vaciar</button>
-          </div>
-
-          <label>Nombre para llamar
-            <input class="field" id="kioskCustomerName" name="name" placeholder="Ej. Carlos" required autocomplete="off">
-          </label>
-          <label>Mesa o referencia
-            <input class="field" id="kioskTableLabel" name="tableLabel" placeholder="Kiosko / Mesa 1" required autocomplete="off">
-          </label>
-
-          <div class="kiosk-option-block">
-            <strong>Tipo de pedido</strong>
-            <div class="kiosk-segmented" id="kioskDeliveryOptions"></div>
-          </div>
-
-          <div class="kiosk-option-block">
-            <strong>Pago</strong>
-            <div class="kiosk-segmented" id="kioskPaymentOptions"></div>
-          </div>
-
-          <div class="kiosk-cart-lines" id="kioskCartLines">
-            <div class="empty-state">Agrega productos para empezar.</div>
-          </div>
-
-          <div class="kiosk-total">
-            <span>Total</span>
-            <strong id="kioskTotal">$0.00</strong>
-          </div>
-
-          <button class="btn btn--brand kiosk-submit" type="submit" id="kioskSubmit" disabled>
-            Enviar pedido a cocina
-          </button>
-        </form>
-      </aside>
     </main>
+
+    <div class="kiosk-action-bar" id="kioskActionBar" hidden>
+      <div>
+        <strong id="kioskBarCount">0 productos</strong>
+        <span id="kioskBarTotal">$0.00</span>
+      </div>
+      <div class="kiosk-action-bar__actions">
+        <button class="btn btn--ghost btn--small" type="button" id="kioskClearCart">Vaciar</button>
+        <button class="btn btn--brand" type="button" id="kioskReviewOrder" disabled>Revisar pedido</button>
+      </div>
+    </div>
 
     <dialog class="dialog" id="productDialog"></dialog>
     <dialog class="dialog" id="cartDialog"></dialog>
+    <dialog class="dialog kiosk-details-dialog" id="kioskDetailsDialog"></dialog>
+    <dialog class="dialog kiosk-confirm-dialog" id="kioskConfirmDialog"></dialog>
     <dialog class="dialog kiosk-success-dialog" id="kioskSuccessDialog"></dialog>
     <button class="kiosk-screensaver" id="kioskScreensaver" type="button" hidden aria-label="Tocar para ordenar">
       <span class="kiosk-screensaver__brand">
