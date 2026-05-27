@@ -5,6 +5,62 @@ const adminPrice = (cents) => `${((Number(cents) || 0) / 100).toFixed(2).replace
 const statuses = ['Nuevo', 'Aceptado', 'En preparacion', 'Listo', 'En camino', 'Entregado', 'Cancelado'];
 const availablePermissions = ['*', 'orders:view', 'orders:update', 'orders:kds', 'orders:update-ready', 'orders:view-assigned', 'orders:update-delivered', 'orders:charge', 'payments:update', 'catalog:view', 'reports:view', 'delivery:view', 'audit:view'];
 const ORDER_ALERT_SOUND_URL = '/assets/sounds/new-order-alert.mp3';
+const detectedPrintersState = {
+  loaded: false,
+  printers: [],
+  message: ''
+};
+
+const DEFAULT_PRINTER_CONFIG = {
+  printers: {
+    caja: {
+      enabled: true,
+      name: 'Caja',
+      type: 'thermal',
+      ticketWidthMm: 80,
+      connectionMode: 'browser',
+      systemPrinterName: '',
+      networkHost: '',
+      networkPort: 9100
+    },
+    cocina: {
+      enabled: true,
+      name: 'Cocina',
+      type: 'thermal',
+      ticketWidthMm: 80,
+      connectionMode: 'browser',
+      systemPrinterName: '',
+      networkHost: '',
+      networkPort: 9100
+    },
+    kiosk: {
+      enabled: true,
+      name: 'Kiosko',
+      type: 'thermal',
+      ticketWidthMm: 80,
+      connectionMode: 'browser',
+      systemPrinterName: '',
+      networkHost: '',
+      networkPort: 9100,
+      printOrderNumberOnly: true
+    },
+    etiquetas: {
+      enabled: true,
+      name: 'Zebra vasos',
+      type: 'zebra-label',
+      labelWidthIn: 2,
+      labelHeightIn: 1,
+      copiesPerDrink: 1,
+      connectionMode: 'browser',
+      systemPrinterName: '',
+      networkHost: '',
+      networkPort: 9100,
+      includePrice: false,
+      autoPrintFromKiosk: false
+    }
+  },
+  labelDrinkCategorySlugs: ['milk-tea', 'smoothies', 'iced-coffee', 'refreshers']
+};
 
 const state = {
   user: null,
@@ -626,12 +682,12 @@ function handleOrdersClick(event) {
   const printButton = event.target.closest('[data-print-ticket]');
   if (printButton) {
     const order = state.orders.find((item) => item.id === Number(printButton.dataset.printTicket));
-    printTicket(order);
+    if (order) printTicket(order).catch((error) => showToast(error.message));
   }
   const kitchenButton = event.target.closest('[data-print-kitchen]');
   if (kitchenButton) {
     const order = state.orders.find((item) => item.id === Number(kitchenButton.dataset.printKitchen));
-    printKitchenTicket(order);
+    if (order) printKitchenTicket(order).catch((error) => showToast(error.message));
   }
   $('#ordersSection').addEventListener('click', handleOrdersClick, { once: true });
 }
@@ -2339,9 +2395,227 @@ function accountingEntriesTable(entries) {
   `;
 }
 
+function printerTicketWidth(value, fallback = 80) {
+  const width = Number(value);
+  return [58, 80].includes(width) ? width : fallback;
+}
+
+function printerConnectionMode(value, fallback = 'browser') {
+  return ['browser', 'system', 'network'].includes(value) ? value : fallback;
+}
+
+function printerPort(value, fallback = 9100) {
+  const port = Math.round(Number(value));
+  return port >= 1 && port <= 65535 ? port : fallback;
+}
+
+function printerRange(value, min, max, fallback, round = false) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return fallback;
+  const clamped = Math.min(max, Math.max(min, number));
+  return round ? Math.round(clamped) : clamped;
+}
+
+function normalizeAdminThermalPrinter(input, defaults, legacy = {}) {
+  const config = input && typeof input === 'object' ? input : {};
+  return {
+    ...defaults,
+    ...config,
+    enabled: Boolean(config.enabled ?? legacy.enabled ?? defaults.enabled),
+    type: 'thermal',
+    ticketWidthMm: printerTicketWidth(config.ticketWidthMm ?? legacy.ticketWidthMm, defaults.ticketWidthMm),
+    connectionMode: printerConnectionMode(config.connectionMode ?? legacy.connectionMode, defaults.connectionMode),
+    systemPrinterName: String(config.systemPrinterName ?? legacy.systemPrinterName ?? defaults.systemPrinterName ?? ''),
+    networkHost: String(config.networkHost ?? legacy.networkHost ?? defaults.networkHost ?? ''),
+    networkPort: printerPort(config.networkPort ?? legacy.networkPort, defaults.networkPort)
+  };
+}
+
+function normalizeAdminLabelPrinter(input, defaults, legacy = {}) {
+  const config = input && typeof input === 'object' ? input : {};
+  return {
+    ...defaults,
+    ...config,
+    enabled: Boolean(config.enabled ?? legacy.enabled ?? defaults.enabled),
+    type: 'zebra-label',
+    labelWidthIn: printerRange(config.labelWidthIn ?? legacy.labelWidthIn, 1, 4, defaults.labelWidthIn),
+    labelHeightIn: printerRange(config.labelHeightIn ?? legacy.labelHeightIn, 0.5, 3, defaults.labelHeightIn),
+    copiesPerDrink: printerRange(config.copiesPerDrink ?? legacy.copiesPerDrink, 1, 5, defaults.copiesPerDrink, true),
+    connectionMode: printerConnectionMode(config.connectionMode ?? legacy.connectionMode, defaults.connectionMode),
+    systemPrinterName: String(config.systemPrinterName ?? legacy.systemPrinterName ?? defaults.systemPrinterName ?? ''),
+    networkHost: String(config.networkHost ?? legacy.networkHost ?? defaults.networkHost ?? ''),
+    networkPort: printerPort(config.networkPort ?? legacy.networkPort, defaults.networkPort),
+    includePrice: Boolean(config.includePrice ?? legacy.includePrice ?? defaults.includePrice),
+    autoPrintFromKiosk: Boolean(config.autoPrintFromKiosk ?? legacy.autoPrintFromKiosk ?? defaults.autoPrintFromKiosk)
+  };
+}
+
+function normalizeAdminPrinterConfig(input = {}) {
+  const config = input && typeof input === 'object' ? input : {};
+  const printers = config.printers && typeof config.printers === 'object' ? config.printers : {};
+  return {
+    printers: {
+      caja: normalizeAdminThermalPrinter(printers.caja, DEFAULT_PRINTER_CONFIG.printers.caja, {
+        enabled: config.ticketPrinterEnabled,
+        ticketWidthMm: config.ticketWidthMm
+      }),
+      cocina: normalizeAdminThermalPrinter(printers.cocina, DEFAULT_PRINTER_CONFIG.printers.cocina, {
+        enabled: config.ticketPrinterEnabled,
+        ticketWidthMm: config.ticketWidthMm
+      }),
+      kiosk: normalizeAdminThermalPrinter(printers.kiosk, DEFAULT_PRINTER_CONFIG.printers.kiosk, {
+        enabled: config.ticketPrinterEnabled,
+        ticketWidthMm: config.ticketWidthMm
+      }),
+      etiquetas: normalizeAdminLabelPrinter(printers.etiquetas, DEFAULT_PRINTER_CONFIG.printers.etiquetas, {
+        enabled: config.labelPrinterEnabled,
+        labelWidthIn: config.labelWidthIn,
+        labelHeightIn: config.labelHeightIn,
+        copiesPerDrink: config.labelCopiesPerDrink,
+        includePrice: config.labelIncludePrice,
+        autoPrintFromKiosk: config.labelAutoPrintFromKiosk
+      })
+    },
+    labelDrinkCategorySlugs: Array.isArray(config.labelDrinkCategorySlugs)
+      ? config.labelDrinkCategorySlugs
+      : DEFAULT_PRINTER_CONFIG.labelDrinkCategorySlugs
+  };
+}
+
+function ticketWidthOptions(current) {
+  return `
+    <option value="80" ${Number(current) === 80 ? 'selected' : ''}>80 mm</option>
+    <option value="58" ${Number(current) === 58 ? 'selected' : ''}>58 mm</option>
+  `;
+}
+
+function printerConnectionOptions(current) {
+  const selected = printerConnectionMode(current);
+  return `
+    <option value="browser" ${selected === 'browser' ? 'selected' : ''}>Navegador / elegir al imprimir</option>
+    <option value="system" ${selected === 'system' ? 'selected' : ''}>PC / impresora instalada</option>
+    <option value="network" ${selected === 'network' ? 'selected' : ''}>Red / IP directa</option>
+  `;
+}
+
+function detectedPrinterOptions(current) {
+  const selected = String(current || '');
+  const detected = detectedPrintersState.printers || [];
+  const includesSelected = detected.some((printer) => printer.name === selected);
+  return `
+    <option value="">Seleccionar impresora detectada</option>
+    ${selected && !includesSelected ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)} (guardada)</option>` : ''}
+    ${detected.map((printer) => `
+      <option value="${escapeHtml(printer.name)}" ${printer.name === selected ? 'selected' : ''}>
+        ${escapeHtml(printer.name)}${printer.isDefault ? ' - predeterminada' : ''}${printer.connection ? ` - ${escapeHtml(printer.connection)}` : ''}
+      </option>
+    `).join('')}
+  `;
+}
+
+function renderThermalPrinterSettings(role, title, description, printer) {
+  const prefix = `printer${role}`;
+  return `
+    <article class="printer-role">
+      <header>
+        <div>
+          <strong>${escapeHtml(title)}</strong>
+          <span class="muted">${escapeHtml(description)}</span>
+        </div>
+        <label class="inline-check"><input type="checkbox" name="${prefix}Enabled" ${printer.enabled ? 'checked' : ''}> Activa</label>
+      </header>
+      <div class="form-grid">
+        <label>Nombre de impresora<input class="field" name="${prefix}Name" value="${escapeHtml(printer.name || title)}"></label>
+        <label>Ancho de ticket
+          <select class="select" name="${prefix}WidthMm">${ticketWidthOptions(printer.ticketWidthMm)}</select>
+        </label>
+        <label>Conexion
+          <select class="select" name="${prefix}ConnectionMode">${printerConnectionOptions(printer.connectionMode)}</select>
+        </label>
+        <label>Impresora conectada al PC
+          <select class="select" name="${prefix}SystemPrinterName" data-detected-printer-select>${detectedPrinterOptions(printer.systemPrinterName)}</select>
+        </label>
+        <label>IP o host de red<input class="field" name="${prefix}NetworkHost" value="${escapeHtml(printer.networkHost || '')}" placeholder="192.168.1.50"></label>
+        <label>Puerto red<input class="field" name="${prefix}NetworkPort" type="number" min="1" max="65535" value="${printer.networkPort || 9100}"></label>
+      </div>
+    </article>
+  `;
+}
+
+function renderLabelPrinterSettings(printer, slugs) {
+  return `
+    <article class="printer-role">
+      <header>
+        <div>
+          <strong>Zebra etiquetas</strong>
+          <span class="muted">Etiquetas 2 x 1 para vasos; una por bebida.</span>
+        </div>
+        <label class="inline-check"><input type="checkbox" name="printerEtiquetasEnabled" ${printer.enabled ? 'checked' : ''}> Activa</label>
+      </header>
+      <div class="form-grid">
+        <label>Nombre de impresora<input class="field" name="printerEtiquetasName" value="${escapeHtml(printer.name || 'Zebra vasos')}"></label>
+        <label>Copias por bebida<input class="field" name="printerEtiquetasCopies" type="number" min="1" max="5" value="${printer.copiesPerDrink}"></label>
+        <label>Ancho etiqueta (pulg.)<input class="field" name="printerEtiquetasWidthIn" type="number" min="1" max="4" step="0.1" value="${printer.labelWidthIn}"></label>
+        <label>Alto etiqueta (pulg.)<input class="field" name="printerEtiquetasHeightIn" type="number" min="0.5" max="3" step="0.1" value="${printer.labelHeightIn}"></label>
+        <label>Conexion
+          <select class="select" name="printerEtiquetasConnectionMode">${printerConnectionOptions(printer.connectionMode)}</select>
+        </label>
+        <label>Impresora conectada al PC
+          <select class="select" name="printerEtiquetasSystemPrinterName" data-detected-printer-select>${detectedPrinterOptions(printer.systemPrinterName)}</select>
+        </label>
+        <label>IP o host de red<input class="field" name="printerEtiquetasNetworkHost" value="${escapeHtml(printer.networkHost || '')}" placeholder="192.168.1.60"></label>
+        <label>Puerto red<input class="field" name="printerEtiquetasNetworkPort" type="number" min="1" max="65535" value="${printer.networkPort || 9100}"></label>
+        <label><input type="checkbox" name="printerEtiquetasIncludePrice" ${printer.includePrice ? 'checked' : ''}> Mostrar precio en etiqueta</label>
+        <label class="wide">Categorias de bebidas para etiquetas
+          <input class="field" name="labelDrinkCategorySlugs" value="${escapeHtml((slugs || []).join(', '))}" placeholder="milk-tea, smoothies, iced-coffee, refreshers">
+        </label>
+      </div>
+    </article>
+  `;
+}
+
+function updateDetectedPrinterSelects() {
+  $$('[data-detected-printer-select]').forEach((select) => {
+    const current = select.value;
+    select.innerHTML = detectedPrinterOptions(current);
+  });
+  const status = $('#printerDetectionStatus');
+  if (!status) return;
+  if (!detectedPrintersState.loaded) {
+    status.textContent = 'Puedes seleccionar una impresora instalada en esta PC o configurar una impresora de red por IP.';
+    return;
+  }
+  const count = detectedPrintersState.printers.length;
+  status.textContent = count
+    ? `${count} impresora${count === 1 ? '' : 's'} detectada${count === 1 ? '' : 's'} en esta PC.`
+    : detectedPrintersState.message || 'No se encontraron impresoras instaladas en esta PC.';
+}
+
+async function detectConnectedPrinters() {
+  const button = $('#detectPrinters');
+  const status = $('#printerDetectionStatus');
+  if (button) button.disabled = true;
+  if (status) status.textContent = 'Buscando impresoras conectadas...';
+  try {
+    const data = await api('/api/admin/printers/detected');
+    detectedPrintersState.loaded = true;
+    detectedPrintersState.printers = data.printers || [];
+    detectedPrintersState.message = data.message || '';
+    updateDetectedPrinterSelects();
+    showToast(detectedPrintersState.printers.length ? 'Impresoras detectadas' : 'No se encontraron impresoras');
+  } catch (error) {
+    if (status) status.textContent = error.message;
+    showToast(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function renderSettings() {
   const data = await api('/api/admin/settings');
   const business = data.business;
+  const printerConfig = normalizeAdminPrinterConfig(business.printerConfig || {});
+  const printers = printerConfig.printers;
   applyAdminBrand(business);
   const menuUrl = `${location.origin}/menu`;
   const tableExampleUrl = `${location.origin}/menu?table=Mesa%201`;
@@ -2415,6 +2689,28 @@ async function renderSettings() {
         </section>
 
         <section class="settings-block">
+          <header>
+            <h2>Impresoras</h2>
+            <div class="actions-row">
+              <button class="btn btn--ghost btn--small" type="button" id="detectPrinters">Detectar impresoras</button>
+              <span class="badge">Caja, cocina y kiosk</span>
+            </div>
+          </header>
+          <div class="printer-detection-status" id="printerDetectionStatus">
+            ${detectedPrintersState.loaded
+              ? `${detectedPrintersState.printers.length} impresora${detectedPrintersState.printers.length === 1 ? '' : 's'} detectada${detectedPrintersState.printers.length === 1 ? '' : 's'}.`
+              : 'Puedes seleccionar una impresora instalada en esta PC o configurar una impresora de red por IP.'}
+          </div>
+          <div class="printer-grid">
+            ${renderThermalPrinterSettings('Caja', 'Impresora caja', 'Ticket de pago, recibo y cobro.', printers.caja)}
+            ${renderThermalPrinterSettings('Cocina', 'Impresora cocina', 'Comandas internas para preparacion.', printers.cocina)}
+            ${renderThermalPrinterSettings('Kiosk', 'Impresora kiosk', 'Solo imprime el numero de orden del autoservicio.', printers.kiosk)}
+            ${renderLabelPrinterSettings(printers.etiquetas, printerConfig.labelDrinkCategorySlugs)}
+          </div>
+          <p class="muted" style="margin:12px 0 0">En kiosk no se imprimen tickets detallados ni etiquetas desde la pantalla del cliente; solo el numero de orden. Las etiquetas Zebra quedan configuradas para flujo interno.</p>
+        </section>
+
+        <section class="settings-block">
           <header><h2>Horarios</h2></header>
           <div class="schedule-grid" id="hoursEditor">${renderHoursEditor(business.hours)}</div>
         </section>
@@ -2449,12 +2745,63 @@ async function renderSettings() {
       prepDeliveryMinutes: Number(form.elements.prepDeliveryMinutes.value || 0),
       prepDineinMinutes: Number(form.elements.prepDineinMinutes.value || 0),
       tableQrEnabled: form.elements.tableQrEnabled.checked,
+      printerConfig: {
+        printers: {
+          caja: {
+            enabled: form.elements.printerCajaEnabled.checked,
+            name: form.elements.printerCajaName.value,
+            type: 'thermal',
+            ticketWidthMm: Number(form.elements.printerCajaWidthMm.value || 80),
+            connectionMode: form.elements.printerCajaConnectionMode.value,
+            systemPrinterName: form.elements.printerCajaSystemPrinterName.value,
+            networkHost: form.elements.printerCajaNetworkHost.value,
+            networkPort: Number(form.elements.printerCajaNetworkPort.value || 9100)
+          },
+          cocina: {
+            enabled: form.elements.printerCocinaEnabled.checked,
+            name: form.elements.printerCocinaName.value,
+            type: 'thermal',
+            ticketWidthMm: Number(form.elements.printerCocinaWidthMm.value || 80),
+            connectionMode: form.elements.printerCocinaConnectionMode.value,
+            systemPrinterName: form.elements.printerCocinaSystemPrinterName.value,
+            networkHost: form.elements.printerCocinaNetworkHost.value,
+            networkPort: Number(form.elements.printerCocinaNetworkPort.value || 9100)
+          },
+          kiosk: {
+            enabled: form.elements.printerKioskEnabled.checked,
+            name: form.elements.printerKioskName.value,
+            type: 'thermal',
+            ticketWidthMm: Number(form.elements.printerKioskWidthMm.value || 80),
+            connectionMode: form.elements.printerKioskConnectionMode.value,
+            systemPrinterName: form.elements.printerKioskSystemPrinterName.value,
+            networkHost: form.elements.printerKioskNetworkHost.value,
+            networkPort: Number(form.elements.printerKioskNetworkPort.value || 9100),
+            printOrderNumberOnly: true
+          },
+          etiquetas: {
+            enabled: form.elements.printerEtiquetasEnabled.checked,
+            name: form.elements.printerEtiquetasName.value,
+            type: 'zebra-label',
+            labelWidthIn: Number(form.elements.printerEtiquetasWidthIn.value || 2),
+            labelHeightIn: Number(form.elements.printerEtiquetasHeightIn.value || 1),
+            copiesPerDrink: Number(form.elements.printerEtiquetasCopies.value || 1),
+            connectionMode: form.elements.printerEtiquetasConnectionMode.value,
+            systemPrinterName: form.elements.printerEtiquetasSystemPrinterName.value,
+            networkHost: form.elements.printerEtiquetasNetworkHost.value,
+            networkPort: Number(form.elements.printerEtiquetasNetworkPort.value || 9100),
+            includePrice: form.elements.printerEtiquetasIncludePrice.checked,
+            autoPrintFromKiosk: false
+          }
+        },
+        labelDrinkCategorySlugs: form.elements.labelDrinkCategorySlugs.value.split(',').map((item) => item.trim()).filter(Boolean)
+      },
       hours: collectHours()
     };
     const result = await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify(payload) });
     applyAdminBrand(result.business);
     showToast('Configuracion guardada');
   });
+  $('#detectPrinters').addEventListener('click', detectConnectedPrinters);
   $('#copyMenuUrl').addEventListener('click', async () => {
     await navigator.clipboard.writeText(menuUrl);
     showToast('Enlace copiado');
@@ -2729,9 +3076,45 @@ function resetUserForm() {
   $('#userFormTitle').textContent = 'Nuevo usuario';
 }
 
-function printTicket(order) {
+function printerUsesAgent(printer) {
+  if (!printer?.enabled) return false;
+  if (printer.connectionMode === 'system') return Boolean(printer.systemPrinterName);
+  if (printer.connectionMode === 'network') return Boolean(printer.networkHost);
+  return false;
+}
+
+async function queueAgentPrint(order, role) {
+  const config = normalizeAdminPrinterConfig(state.business?.printerConfig || {});
+  const printer = config.printers[role];
+  if (!['system', 'network'].includes(printer?.connectionMode)) return false;
+  if (!printerUsesAgent(printer)) {
+    showToast('Configura la impresora local o de red antes de enviar al agente.');
+    return true;
+  }
+  const result = await api(`/api/admin/orders/${order.id}/print-jobs`, {
+    method: 'POST',
+    body: JSON.stringify({ roles: [role] })
+  });
+  showToast(result.jobs?.length ? 'Trabajo enviado al agente de impresion' : 'No se creo ningun trabajo de impresion');
+  return true;
+}
+
+function prepareAdminPrint(layout = 'ticket', role = 'caja') {
+  const target = $('#ticketPrint');
+  const config = normalizeAdminPrinterConfig(state.business?.printerConfig || {});
+  const printer = config.printers[role] || config.printers.caja;
+  target.dataset.printLayout = layout;
+  target.style.setProperty('--ticket-width', `${Number(printer.ticketWidthMm || 80)}mm`);
+  target.style.setProperty('--label-width', `${Number(config.printers.etiquetas.labelWidthIn || 2)}in`);
+  target.style.setProperty('--label-height', `${Number(config.printers.etiquetas.labelHeightIn || 1)}in`);
+  target.innerHTML = '';
+  return target;
+}
+
+async function printTicket(order) {
+  if (await queueAgentPrint(order, 'caja')) return;
   const businessName = state.business?.name || 'Long Cha';
-  $('#ticketPrint').innerHTML = `
+  prepareAdminPrint('ticket', 'caja').innerHTML = `
     <div style="text-align:center">
       <strong>${escapeHtml(businessName)}</strong><br>
       Pedido ${escapeHtml(order.orderNumber)}<br>
@@ -2758,8 +3141,9 @@ function printTicket(order) {
   window.print();
 }
 
-function printKitchenTicket(order) {
-  $('#ticketPrint').innerHTML = `
+async function printKitchenTicket(order) {
+  if (await queueAgentPrint(order, 'cocina')) return;
+  prepareAdminPrint('ticket', 'cocina').innerHTML = `
     <div style="text-align:center">
       <strong>COCINA</strong><br>
       Pedido ${escapeHtml(order.orderNumber)}<br>

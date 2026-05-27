@@ -89,11 +89,49 @@ WHATSAPP_CLOUD_TOKEN=
 WHATSAPP_PHONE_NUMBER_ID=
 WHATSAPP_GRAPH_API_VERSION=v23.0
 WHATSAPP_GRAPH_BASE_URL=https://graph.facebook.com
+PRINT_AGENT_TOKEN=dev-print-agent-token
+POS_SERVER_URL=http://localhost:3000
+PRINT_AGENT_ID=longcha-store-pc
+PRINT_AGENT_INTERVAL_MS=2500
 ```
 
 La base SQLite se crea automaticamente en `data/restaurant_mvp.sqlite`.
 
 Para enviar cambios de estado por WhatsApp automaticamente, activa `WHATSAPP_AUTO_STATUS_UPDATES=true` y configura `WHATSAPP_CLOUD_TOKEN` y `WHATSAPP_PHONE_NUMBER_ID`. Por defecto solo envia mensajes en `Aceptado` y `Listo`; puedes cambiarlo en `WHATSAPP_NOTIFY_STATUSES`. Si no hay credenciales, el panel mantiene el boton manual `Enviar WhatsApp` con el mensaje prellenado.
+
+## Agente local de impresion
+
+Para imprimir sin abrir la ventana del navegador cuando el sistema esta en Render/Railway o en otro servidor cloud, ejecuta un agente local en la PC del negocio. Ese agente se conecta hacia el backend, toma trabajos pendientes y los envia a impresoras instaladas en Windows/macOS/Linux o a impresoras de red por IP/puerto.
+
+1. En el servidor web configura el mismo token:
+
+```env
+PRINT_AGENT_TOKEN=un-token-largo-y-seguro
+```
+
+2. En la PC del negocio configura:
+
+```env
+POS_SERVER_URL=https://tu-dominio.com
+PRINT_AGENT_TOKEN=un-token-largo-y-seguro
+PRINT_AGENT_ID=longcha-caja-1
+```
+
+3. Inicia el agente:
+
+```bash
+npm run print-agent
+```
+
+En desarrollo local puedes usar `PRINT_AGENT_TOKEN=dev-print-agent-token` y `POS_SERVER_URL=http://localhost:3000`.
+
+Desde el panel de configuracion, en `Impresoras`, elige por cada rol:
+
+- `Navegador`: abre la impresion normal del navegador.
+- `PC / impresora instalada`: el agente imprime en una impresora instalada en esa PC.
+- `Red / IP directa`: el agente envia el trabajo directo a la IP y puerto de la impresora, normalmente `9100`.
+
+La impresion directa por red es la recomendada para termicas ESC/POS y Zebra ZPL. Para impresoras instaladas en Windows, el agente usa el spooler del sistema.
 
 ## Modelo de base de datos
 
@@ -107,7 +145,7 @@ Tablas principales:
 - `payment_methods`, `delivery_methods`, `delivery_zones`
 - `customers`, `orders`, `order_items`, `order_status_history`
 - `promotions`
-- `audit_logs`, `notification_logs`
+- `audit_logs`, `notification_logs`, `print_jobs`
 
 Cada pedido guarda:
 

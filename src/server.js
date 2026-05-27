@@ -1,12 +1,17 @@
 import http from 'node:http';
 import https from 'node:https';
+import { execFile } from 'node:child_process';
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import {
   ValidationError,
   auditLog,
+  claimPrintJobs,
+  completePrintJob,
   createOrder,
+  createPrintJobs,
   createSession,
   db,
   databasePath,
@@ -18,6 +23,7 @@ import {
   deleteOptionalOption,
   deleteProduct,
   deleteSession,
+  failPrintJob,
   formatOrderForWhatsApp,
   getAdminCatalog,
   getAccounting,
@@ -40,6 +46,7 @@ import {
   listOptionalGroups,
   listOrders,
   listOrdersByCustomerPhone,
+  listPrintJobs,
   listPromotions,
   listRoles,
   listUsers,
@@ -84,6 +91,7 @@ import { sendWhatsAppStatus, whatsappStatusUrl } from './whatsapp.js';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const publicDir = path.join(rootDir, 'public');
+const execFileAsync = promisify(execFile);
 
 loadEnv();
 initDatabase();
@@ -103,6 +111,7 @@ const sessionRotateMinutes = Number(process.env.SESSION_ROTATE_MINUTES || 30);
 const backupIntervalHours = Number(process.env.BACKUP_INTERVAL_HOURS || 24);
 const enforceHttps = String(process.env.ENFORCE_HTTPS || '').toLowerCase() === 'true';
 const trustProxy = String(process.env.TRUST_PROXY || 'true').toLowerCase() !== 'false';
+const printAgentToken = process.env.PRINT_AGENT_TOKEN || (process.env.NODE_ENV === 'production' ? '' : 'dev-print-agent-token');
 
 mkdirSync(uploadRoot, { recursive: true });
 mkdirSync(backupDir, { recursive: true });
@@ -543,6 +552,340 @@ function canChangeStatus(user, status) {
   );
 }
 
+function asArray(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function normalizeDetectedPrinter(printer, platform, defaultPrinter = '') {
+  const name = String(printer.Name || printer.name || '').trim();
+  if (!name) return null;
+  const port = String(printer.PortName || printer.port || printer.DeviceUri || '').trim();
+  const isNetwork = Boolean(printer.Network) || /network/i.test(name) || /^IP_|^TCP|^WSD|^\d{1,3}(\.\d{1,3}){3}|socket:|ipp:|lpd:/i.test(port);
+  return {
+    id: name,
+    name,
+    driver: String(printer.DriverName || printer.driver || '').trim(),
+    port,
+    source: platform,
+    connection: isNetwork ? 'red' : 'pc',
+    isDefault: Boolean(printer.Default) || name === defaultPrinter,
+    isShared: Boolean(printer.Shared)
+  };
+}
+
+async function detectConnectedPrinters() {
+  if (process.platform === 'win32') return detectWindowsPrinters();
+  if (process.platform === 'darwin' || process.platform === 'linux') return detectCupsPrinters();
+  return {
+    platform: process.platform,
+    source: 'unsupported',
+    printers: [],
+    message: 'Este sistema operativo no tiene deteccion automatica de impresoras configurada.'
+  };
+}
+
+async function detectWindowsPrinters() {
+  const script = `
+    $printers = @()
+    $defaultPrinter = ''
+    try {
+      $printers = Get-Printer | Select-Object Name,DriverName,PortName,Shared,PrinterStatus
+    } catch {
+      try {
+        $printers = Get-CimInstance Win32_Printer | Select-Object Name,DriverName,PortName,Network,Local,Shared,Default
+      } catch {
+        $printers = @()
+      }
+    }
+    try {
+      $defaultPrinter = (Get-CimInstance Win32_Printer | Where-Object { $_.Default -eq $true } | Select-Object -First 1 -ExpandProperty Name)
+    } catch {
+      $defaultPrinter = ''
+    }
+    [PSCustomObject]@{
+      platform = 'windows'
+      source = 'windows-print-spooler'
+      defaultPrinter = $defaultPrinter
+      printers = @($printers)
+    } | ConvertTo-Json -Compress -Depth 5
+  `;
+  try {
+    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+      windowsHide: true,
+      timeout: 8000,
+      maxBuffer: 512 * 1024
+    });
+    const payload = JSON.parse(stdout || '{}');
+    const printers = asArray(payload.printers)
+      .map((printer) => normalizeDetectedPrinter(printer, 'windows', payload.defaultPrinter || ''))
+      .filter(Boolean)
+      .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name));
+    return {
+      platform: 'windows',
+      source: payload.source || 'windows-print-spooler',
+      printers,
+      message: printers.length ? '' : 'No se encontraron impresoras instaladas en esta PC.'
+    };
+  } catch (error) {
+    return {
+      platform: 'windows',
+      source: 'windows-print-spooler',
+      printers: [],
+      message: `No se pudieron detectar impresoras en esta PC: ${error.message}`
+    };
+  }
+}
+
+async function detectCupsPrinters() {
+  try {
+    const { stdout } = await execFileAsync('lpstat', ['-v'], {
+      timeout: 5000,
+      maxBuffer: 256 * 1024
+    });
+    const printers = stdout
+      .split(/\r?\n/)
+      .map((line) => {
+        const match = line.match(/^device for\s+(.+?):\s+(.+)$/i);
+        if (!match) return null;
+        return normalizeDetectedPrinter({ Name: match[1], DeviceUri: match[2], PortName: match[2] }, process.platform);
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return {
+      platform: process.platform,
+      source: 'cups',
+      printers,
+      message: printers.length ? '' : 'No se encontraron impresoras configuradas en CUPS.'
+    };
+  } catch (error) {
+    return {
+      platform: process.platform,
+      source: 'cups',
+      printers: [],
+      message: `No se pudieron detectar impresoras: ${error.message}`
+    };
+  }
+}
+
+function moneyText(cents) {
+  return `$${(Number(cents || 0) / 100).toFixed(2)}`;
+}
+
+function orderModifierLines(item, includePrices = true) {
+  const variants = Object.entries(item.variants || {}).map(([key, value]) => `${key}: ${value}`);
+  const extras = (item.extras || []).map((extra) => {
+    const group = extra.groupName ? `${extra.groupName}: ` : '+ ';
+    const price = includePrices && extra.priceCents ? ` ${moneyText(extra.priceCents)}` : '';
+    return `${group}${extra.name}${price}`;
+  });
+  const notes = item.notes ? [`Nota: ${item.notes}`] : [];
+  return [...variants, ...extras, ...notes].filter(Boolean);
+}
+
+function textLine(char = '-', width = 32) {
+  return char.repeat(width);
+}
+
+function buildTicketText(order, { type = 'payment' } = {}) {
+  const business = getBusiness();
+  const isKitchen = type === 'kitchen';
+  const lines = [
+    isKitchen ? 'PEDIDO COCINA' : business.name,
+    `Pedido ${order.orderNumber}`,
+    new Date(order.createdAt || Date.now()).toLocaleString('es-SV'),
+    textLine(),
+    `Cliente: ${order.customer.name}`,
+    `Telefono: ${order.customer.phone}`,
+    order.tableLabel ? `Mesa/ref: ${order.tableLabel}` : '',
+    `Entrega: ${order.deliveryMethod.name}`,
+    isKitchen ? '' : `Pago: ${order.paymentMethod.name}`,
+    textLine()
+  ].filter(Boolean);
+
+  for (const item of order.items || []) {
+    lines.push(`${item.quantity} x ${item.productName}${isKitchen ? '' : ` ${moneyText(item.lineTotalCents)}`}`);
+    for (const modifier of orderModifierLines(item, !isKitchen)) lines.push(`  ${modifier}`);
+    lines.push('');
+  }
+
+  if (order.notes) {
+    lines.push(textLine(), 'Notas generales:', order.notes);
+  }
+
+  if (!isKitchen) {
+    lines.push(
+      textLine(),
+      `Subtotal: ${moneyText(order.subtotalCents)}`,
+      order.discountCents ? `Descuento: -${moneyText(order.discountCents)}` : '',
+      `Delivery: ${moneyText(order.deliveryFeeCents)}`,
+      `TOTAL: ${moneyText(order.totalCents)}`
+    );
+  }
+
+  lines.push(textLine(), `Estado: ${order.status}`);
+  return `${lines.filter((line) => line !== '').join('\n')}\n\n`;
+}
+
+function buildOrderNumberText(order) {
+  const business = getBusiness();
+  return [
+    business.name,
+    'NUMERO DE ORDEN',
+    '',
+    order.orderNumber,
+    '',
+    `Cliente: ${order.customer.name}`,
+    order.tableLabel ? `Mesa/ref: ${order.tableLabel}` : '',
+    new Date(order.createdAt || Date.now()).toLocaleString('es-SV'),
+    '',
+    'Conserva este numero para retirar tu pedido.',
+    ''
+  ].filter(Boolean).join('\n');
+}
+
+function escposBase64(text) {
+  return Buffer.concat([
+    Buffer.from([0x1b, 0x40]),
+    Buffer.from(text, 'utf8'),
+    Buffer.from('\n\n\n', 'utf8'),
+    Buffer.from([0x1d, 0x56, 0x00])
+  ]).toString('base64');
+}
+
+function zplSafe(value) {
+  return String(value ?? '')
+    .replace(/\^/g, ' ')
+    .replace(/~/g, ' ')
+    .replace(/[^\x20-\x7E]/g, ' ')
+    .slice(0, 90);
+}
+
+function labelItemsForOrder(order, business) {
+  const slugs = new Set((business.printerConfig.labelDrinkCategorySlugs || []).map((slug) => String(slug).toLowerCase()));
+  const products = new Map(getMenu({}).products.map((product) => [Number(product.id), product]));
+  return (order.items || [])
+    .map((item) => {
+      const product = products.get(Number(item.productId));
+      return { item, product };
+    })
+    .filter(({ product }) => product && slugs.has(String(product.categorySlug || '').toLowerCase()))
+    .flatMap(({ item, product }) => {
+      const labels = [];
+      for (let index = 0; index < Number(item.quantity || 1); index += 1) {
+        labels.push({
+          orderNumber: order.orderNumber,
+          customerName: order.customer.name,
+          tableLabel: order.tableLabel,
+          productName: item.productName,
+          categoryName: product.categoryName || 'Bebida',
+          unitIndex: index + 1,
+          quantity: Number(item.quantity || 1),
+          modifiers: orderModifierLines(item, false)
+        });
+      }
+      return labels;
+    });
+}
+
+function buildLabelsText(labels) {
+  return labels.map((label, index) => [
+    `Etiqueta ${index + 1}/${labels.length}`,
+    `Pedido ${label.orderNumber}`,
+    label.productName,
+    `${label.customerName}${label.tableLabel ? ` - ${label.tableLabel}` : ''}`,
+    label.quantity > 1 ? `Unidad ${label.unitIndex}/${label.quantity}` : '',
+    ...(label.modifiers.length ? label.modifiers.map((modifier) => `- ${modifier}`) : ['Sin modificaciones']),
+    ''
+  ].filter(Boolean).join('\n')).join('\n');
+}
+
+function buildLabelsZpl(labels) {
+  return labels.map((label, index) => {
+    const modifiers = (label.modifiers.length ? label.modifiers : ['Sin modificaciones']).slice(0, 5);
+    return `^XA
+^PW406
+^LL203
+^FO18,12^A0N,22,22^FD${zplSafe(label.orderNumber)}^FS
+^FO300,12^A0N,18,18^FD${index + 1}/${labels.length}^FS
+^FO18,42^A0N,25,25^FD${zplSafe(label.productName)}^FS
+^FO18,72^A0N,16,16^FD${zplSafe(label.customerName)}${label.tableLabel ? ` - ${zplSafe(label.tableLabel)}` : ''}^FS
+${modifiers.map((modifier, modifierIndex) => `^FO18,${96 + modifierIndex * 18}^A0N,15,15^FD${zplSafe(modifier)}^FS`).join('\n')}
+^FO18,184^A0N,13,13^FD${zplSafe(label.categoryName)}${label.quantity > 1 ? ` ${label.unitIndex}/${label.quantity}` : ''}^FS
+^XZ`;
+  }).join('\n');
+}
+
+function printerUsesAgent(printer) {
+  if (!printer?.enabled) return false;
+  if (printer.connectionMode === 'system') return Boolean(printer.systemPrinterName);
+  if (printer.connectionMode === 'network') return Boolean(printer.networkHost);
+  return false;
+}
+
+function isKioskOrder(order) {
+  return /kiosko|autoservicio/i.test(`${order.notes || ''} ${order.customer?.phone || ''}`);
+}
+
+function buildPrintJobPayload(order, role, printer, business) {
+  if (role === 'cocina') {
+    const plainText = buildTicketText(order, { type: 'kitchen' });
+    return { title: `Cocina ${order.orderNumber}`, plainText, rawFormat: 'escpos', rawBase64: escposBase64(plainText) };
+  }
+  if (role === 'kiosk') {
+    const plainText = buildOrderNumberText(order);
+    return { title: `Numero ${order.orderNumber}`, plainText, rawFormat: 'escpos', rawBase64: escposBase64(plainText) };
+  }
+  if (role === 'etiquetas') {
+    const labels = labelItemsForOrder(order, business);
+    if (!labels.length) return null;
+    const zpl = buildLabelsZpl(labels);
+    return {
+      title: `Etiquetas ${order.orderNumber}`,
+      plainText: buildLabelsText(labels),
+      rawFormat: 'zpl',
+      rawBase64: Buffer.from(zpl, 'utf8').toString('base64'),
+      labels
+    };
+  }
+  const plainText = buildTicketText(order, { type: 'payment' });
+  return { title: `Ticket ${order.orderNumber}`, plainText, rawFormat: 'escpos', rawBase64: escposBase64(plainText) };
+}
+
+function enqueuePrintJobsForOrder(order, { roles = null, trigger = 'order.created' } = {}) {
+  const business = getBusiness();
+  const printers = business.printerConfig?.printers || {};
+  const wantedRoles = roles || ['cocina', 'etiquetas', ...(isKioskOrder(order) ? ['kiosk'] : [])];
+  const jobs = [];
+  for (const role of wantedRoles) {
+    const printer = printers[role];
+    if (!printerUsesAgent(printer)) continue;
+    if (role === 'kiosk' && !isKioskOrder(order) && !roles) continue;
+    const payload = buildPrintJobPayload(order, role, printer, business);
+    if (!payload) continue;
+    jobs.push({
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      role,
+      jobType: role === 'etiquetas' ? 'labels' : 'ticket',
+      printerConfig: printer,
+      payload: { ...payload, trigger }
+    });
+  }
+  return createPrintJobs(jobs);
+}
+
+function readBearerToken(req) {
+  const authorization = String(req.headers.authorization || '');
+  return authorization.toLowerCase().startsWith('bearer ') ? authorization.slice(7).trim() : '';
+}
+
+function requirePrintAgent(req) {
+  if (!printAgentToken) throw new ValidationError('PRINT_AGENT_TOKEN no esta configurado en el servidor.', 503);
+  const token = String(req.headers['x-print-agent-token'] || readBearerToken(req) || '');
+  if (token !== printAgentToken) throw new ValidationError('Token de agente de impresion invalido.', 401);
+}
+
 function cleanOrderForPublic(order, { includeRelated = true } = {}) {
   if (!order) return null;
   const business = getBusiness();
@@ -687,6 +1030,14 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && pathname === '/api/orders') {
     const order = createOrder(await readJson(req));
     audit(req, 'orders.created_public', 'order', order.id, { orderNumber: order.orderNumber, totalCents: order.totalCents });
+    const printJobs = enqueuePrintJobsForOrder(order);
+    if (printJobs.length) {
+      audit(req, 'print.jobs_created_auto', 'order', order.id, {
+        orderNumber: order.orderNumber,
+        count: printJobs.length,
+        roles: printJobs.map((job) => job.role)
+      });
+    }
     emitOrderEvent('order.created', order);
     const business = getBusiness();
     const message = formatOrderForWhatsApp(order);
@@ -725,11 +1076,53 @@ async function handleApi(req, res, url) {
     return json(res, 200, { user: getRequestUser(req, res) });
   }
 
+  if (pathname.startsWith('/api/print-agent')) {
+    return handlePrintAgentApi(req, res, url);
+  }
+
   if (pathname.startsWith('/api/admin')) {
     return handleAdminApi(req, res, url);
   }
 
   throw new ValidationError('Ruta no encontrada.', 404);
+}
+
+async function handlePrintAgentApi(req, res, url) {
+  const { pathname } = url;
+  requirePrintAgent(req);
+
+  if (req.method === 'GET' && pathname === '/api/print-agent/health') {
+    return json(res, 200, { ok: true, app: 'QR Food POS Print Agent API' });
+  }
+
+  if (req.method === 'POST' && pathname === '/api/print-agent/jobs/claim') {
+    const body = await readJson(req);
+    const jobs = claimPrintJobs({
+      agentId: body.agentId || req.headers['x-print-agent-id'] || 'print-agent',
+      limit: body.limit || 5
+    });
+    return json(res, 200, { jobs });
+  }
+
+  const completeMatch = pathname.match(/^\/api\/print-agent\/jobs\/(\d+)\/complete$/);
+  if (req.method === 'POST' && completeMatch) {
+    const body = await readJson(req);
+    const job = completePrintJob(Number(completeMatch[1]), body.agentId || req.headers['x-print-agent-id'] || 'print-agent');
+    return json(res, 200, { job });
+  }
+
+  const failMatch = pathname.match(/^\/api\/print-agent\/jobs\/(\d+)\/fail$/);
+  if (req.method === 'POST' && failMatch) {
+    const body = await readJson(req);
+    const job = failPrintJob(
+      Number(failMatch[1]),
+      body.agentId || req.headers['x-print-agent-id'] || 'print-agent',
+      body.error || 'Error de impresion'
+    );
+    return json(res, 200, { job });
+  }
+
+  throw new ValidationError('Ruta de agente no encontrada.', 404);
 }
 
 async function handleAdminApi(req, res, url) {
@@ -794,6 +1187,22 @@ async function handleAdminApi(req, res, url) {
     audit(req, 'orders.payment_updated', 'order', order.id, { orderNumber: order.orderNumber, paymentStatus: order.paymentStatus }, user.id);
     emitOrderEvent('order.updated', order);
     return json(res, 200, { order: withAdminOrderLinks(order) });
+  }
+
+  const orderPrintMatch = pathname.match(/^\/api\/admin\/orders\/(\d+)\/print-jobs$/);
+  if (req.method === 'POST' && orderPrintMatch) {
+    requirePermission(user, 'orders:view');
+    const order = getOrderById(Number(orderPrintMatch[1]));
+    if (!order) throw new ValidationError('Pedido no encontrado.', 404);
+    const body = await readJson(req);
+    const roles = Array.isArray(body.roles) && body.roles.length ? body.roles : ['caja'];
+    const jobs = enqueuePrintJobsForOrder(order, { roles, trigger: 'manual.admin' });
+    audit(req, 'print.jobs_created_manual', 'order', order.id, {
+      orderNumber: order.orderNumber,
+      count: jobs.length,
+      roles
+    }, user.id);
+    return json(res, 201, { jobs });
   }
 
   if (req.method === 'GET' && pathname === '/api/admin/catalog') {
@@ -1082,6 +1491,25 @@ async function handleAdminApi(req, res, url) {
   if (req.method === 'GET' && pathname === '/api/admin/settings') {
     requirePermission(user, '*');
     return json(res, 200, { business: getBusiness(), options: getCheckoutOptions(), branches: listBranches() });
+  }
+  if (req.method === 'GET' && pathname === '/api/admin/printers/detected') {
+    requirePermission(user, '*');
+    const result = await detectConnectedPrinters();
+    audit(req, 'settings.printers_detected', 'business', 1, {
+      platform: result.platform,
+      source: result.source,
+      count: result.printers.length
+    }, user.id);
+    return json(res, 200, result);
+  }
+  if (req.method === 'GET' && pathname === '/api/admin/print-jobs') {
+    requirePermission(user, '*');
+    return json(res, 200, {
+      jobs: listPrintJobs({
+        status: searchParams.get('status') || '',
+        limit: Number(searchParams.get('limit') || 80)
+      })
+    });
   }
   if (req.method === 'PATCH' && pathname === '/api/admin/settings') {
     requirePermission(user, '*');

@@ -21,7 +21,27 @@
       </div>
     </header>
 
-    <main class="kiosk-layout">
+    <section class="kiosk-start" id="kioskStart">
+      <div class="kiosk-start__copy">
+        <span class="eyebrow">Bienvenido</span>
+        <h1>Como quieres ordenar?</h1>
+        <p>Selecciona una opcion para comenzar tu pedido.</p>
+      </div>
+      <div class="kiosk-start__options">
+        <button class="kiosk-start-option" type="button" data-kiosk-service-mode="local">
+          <span class="kiosk-start-option__icon">LC</span>
+          <strong>Comer aqui</strong>
+          <small>Pedido para consumir en el local</small>
+        </button>
+        <button class="kiosk-start-option" type="button" data-kiosk-service-mode="takeaway">
+          <span class="kiosk-start-option__icon">GO</span>
+          <strong>Para llevar</strong>
+          <small>Pedido empacado para retirar</small>
+        </button>
+      </div>
+    </section>
+
+    <main class="kiosk-layout" id="kioskMain" hidden>
       <section class="kiosk-menu-pane">
         <div class="kiosk-hero">
           <div>

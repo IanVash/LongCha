@@ -41,6 +41,56 @@ const cents = (value) => Math.round(Number(value || 0) * 100);
 const money = (value) => Number((Number(value || 0) / 100).toFixed(2));
 const clean = (value, max = 255) => String(value ?? '').trim().slice(0, max);
 const boolInt = (value) => (value ? 1 : 0);
+const DEFAULT_PRINTER_CONFIG = {
+  printers: {
+    caja: {
+      enabled: true,
+      name: 'Caja',
+      type: 'thermal',
+      ticketWidthMm: 80,
+      connectionMode: 'browser',
+      systemPrinterName: '',
+      networkHost: '',
+      networkPort: 9100
+    },
+    cocina: {
+      enabled: true,
+      name: 'Cocina',
+      type: 'thermal',
+      ticketWidthMm: 80,
+      connectionMode: 'browser',
+      systemPrinterName: '',
+      networkHost: '',
+      networkPort: 9100
+    },
+    kiosk: {
+      enabled: true,
+      name: 'Kiosko',
+      type: 'thermal',
+      ticketWidthMm: 80,
+      connectionMode: 'browser',
+      systemPrinterName: '',
+      networkHost: '',
+      networkPort: 9100,
+      printOrderNumberOnly: true
+    },
+    etiquetas: {
+      enabled: true,
+      name: 'Zebra vasos',
+      type: 'zebra-label',
+      labelWidthIn: 2,
+      labelHeightIn: 1,
+      copiesPerDrink: 1,
+      connectionMode: 'browser',
+      systemPrinterName: '',
+      networkHost: '',
+      networkPort: 9100,
+      includePrice: false,
+      autoPrintFromKiosk: false
+    }
+  },
+  labelDrinkCategorySlugs: ['milk-tea', 'smoothies', 'iced-coffee', 'refreshers']
+};
 
 function parseJson(value, fallback) {
   if (!value) return fallback;
@@ -49,6 +99,98 @@ function parseJson(value, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function normalizePrinterConfig(input = {}) {
+  const config = input && typeof input === 'object' ? input : {};
+  const printers = config.printers && typeof config.printers === 'object' ? config.printers : {};
+  const slugs = Array.isArray(config.labelDrinkCategorySlugs)
+    ? config.labelDrinkCategorySlugs
+    : DEFAULT_PRINTER_CONFIG.labelDrinkCategorySlugs;
+
+  return {
+    printers: {
+      caja: normalizeThermalPrinter(printers.caja, DEFAULT_PRINTER_CONFIG.printers.caja, {
+        enabled: config.ticketPrinterEnabled,
+        ticketWidthMm: config.ticketWidthMm
+      }),
+      cocina: normalizeThermalPrinter(printers.cocina, DEFAULT_PRINTER_CONFIG.printers.cocina, {
+        enabled: config.ticketPrinterEnabled,
+        ticketWidthMm: config.ticketWidthMm
+      }),
+      kiosk: normalizeThermalPrinter(printers.kiosk, DEFAULT_PRINTER_CONFIG.printers.kiosk, {
+        enabled: config.ticketPrinterEnabled,
+        ticketWidthMm: config.ticketWidthMm,
+        printOrderNumberOnly: true
+      }),
+      etiquetas: normalizeLabelPrinter(printers.etiquetas, DEFAULT_PRINTER_CONFIG.printers.etiquetas, {
+        enabled: config.labelPrinterEnabled,
+        labelWidthIn: config.labelWidthIn,
+        labelHeightIn: config.labelHeightIn,
+        copiesPerDrink: config.labelCopiesPerDrink,
+        includePrice: config.labelIncludePrice,
+        autoPrintFromKiosk: config.labelAutoPrintFromKiosk
+      })
+    },
+    labelDrinkCategorySlugs: slugs.map((slug) => slugify(slug)).filter(Boolean).slice(0, 40)
+  };
+}
+
+function normalizeTicketWidth(value, fallback) {
+  const width = Number(value);
+  return [58, 80].includes(width) ? width : fallback;
+}
+
+function normalizeConnectionMode(value, fallback = 'browser') {
+  const mode = clean(value, 30);
+  return ['browser', 'system', 'network'].includes(mode) ? mode : fallback;
+}
+
+function normalizePrinterPort(value, fallback = 9100) {
+  const port = Math.round(Number(value));
+  return port >= 1 && port <= 65535 ? port : fallback;
+}
+
+function normalizeRange(value, min, max, fallback, round = false) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return fallback;
+  const clamped = Math.min(max, Math.max(min, number));
+  return round ? Math.round(clamped) : clamped;
+}
+
+function normalizeThermalPrinter(input, defaults, legacy = {}) {
+  const config = input && typeof input === 'object' ? input : {};
+  return {
+    enabled: Boolean(config.enabled ?? legacy.enabled ?? defaults.enabled),
+    name: clean(config.name ?? defaults.name, 80),
+    type: 'thermal',
+    ticketWidthMm: normalizeTicketWidth(config.ticketWidthMm ?? legacy.ticketWidthMm, defaults.ticketWidthMm),
+    connectionMode: normalizeConnectionMode(config.connectionMode ?? legacy.connectionMode, defaults.connectionMode),
+    systemPrinterName: clean(config.systemPrinterName ?? legacy.systemPrinterName ?? defaults.systemPrinterName, 160),
+    networkHost: clean(config.networkHost ?? legacy.networkHost ?? defaults.networkHost, 160),
+    networkPort: normalizePrinterPort(config.networkPort ?? legacy.networkPort, defaults.networkPort),
+    ...(defaults.printOrderNumberOnly || legacy.printOrderNumberOnly || config.printOrderNumberOnly
+      ? { printOrderNumberOnly: true }
+      : {})
+  };
+}
+
+function normalizeLabelPrinter(input, defaults, legacy = {}) {
+  const config = input && typeof input === 'object' ? input : {};
+  return {
+    enabled: Boolean(config.enabled ?? legacy.enabled ?? defaults.enabled),
+    name: clean(config.name ?? defaults.name, 80),
+    type: 'zebra-label',
+    labelWidthIn: normalizeRange(config.labelWidthIn ?? legacy.labelWidthIn, 1, 4, defaults.labelWidthIn),
+    labelHeightIn: normalizeRange(config.labelHeightIn ?? legacy.labelHeightIn, 0.5, 3, defaults.labelHeightIn),
+    copiesPerDrink: normalizeRange(config.copiesPerDrink ?? legacy.copiesPerDrink, 1, 5, defaults.copiesPerDrink, true),
+    connectionMode: normalizeConnectionMode(config.connectionMode ?? legacy.connectionMode, defaults.connectionMode),
+    systemPrinterName: clean(config.systemPrinterName ?? legacy.systemPrinterName ?? defaults.systemPrinterName, 160),
+    networkHost: clean(config.networkHost ?? legacy.networkHost ?? defaults.networkHost, 160),
+    networkPort: normalizePrinterPort(config.networkPort ?? legacy.networkPort, defaults.networkPort),
+    includePrice: Boolean(config.includePrice ?? legacy.includePrice ?? defaults.includePrice),
+    autoPrintFromKiosk: Boolean(config.autoPrintFromKiosk ?? legacy.autoPrintFromKiosk ?? defaults.autoPrintFromKiosk)
+  };
 }
 
 function slugify(value) {
@@ -123,6 +265,7 @@ export function initDatabase() {
       prep_dinein_minutes INTEGER NOT NULL DEFAULT 20,
       table_qr_enabled INTEGER NOT NULL DEFAULT 1,
       temporary_closed_until TEXT DEFAULT '',
+      printer_config_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -313,6 +456,26 @@ export function initDatabase() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS print_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+      order_number TEXT DEFAULT '',
+      role TEXT NOT NULL,
+      job_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      claimed_by TEXT DEFAULT '',
+      printer_config_json TEXT NOT NULL DEFAULT '{}',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      last_error TEXT DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      printed_at TEXT DEFAULT ''
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_print_jobs_status_created ON print_jobs(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_print_jobs_order ON print_jobs(order_id);
+
     CREATE TABLE IF NOT EXISTS promotions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -464,6 +627,7 @@ function runMigrations() {
   addColumn('business', 'prep_dinein_minutes', 'prep_dinein_minutes INTEGER NOT NULL DEFAULT 20');
   addColumn('business', 'table_qr_enabled', 'table_qr_enabled INTEGER NOT NULL DEFAULT 1');
   addColumn('business', 'temporary_closed_until', "temporary_closed_until TEXT DEFAULT ''");
+  addColumn('business', 'printer_config_json', "printer_config_json TEXT NOT NULL DEFAULT '{}'");
   addColumn('products', 'stock_enabled', 'stock_enabled INTEGER NOT NULL DEFAULT 0');
   addColumn('products', 'stock_quantity', 'stock_quantity INTEGER NOT NULL DEFAULT 0');
   addColumn('products', 'low_stock_threshold', 'low_stock_threshold INTEGER NOT NULL DEFAULT 5');
@@ -650,8 +814,8 @@ function seedDatabase() {
       id, name, slug, logo_url, phone, whatsapp_phone, address, currency, timezone,
       is_open_manual, allow_orders_outside_hours, closed_message, hours_json,
       prep_pickup_minutes, prep_delivery_minutes, prep_dinein_minutes, table_qr_enabled,
-      temporary_closed_until, created_at, updated_at
-    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 15, 35, 20, 1, '', ?, ?)
+      temporary_closed_until, printer_config_json, created_at, updated_at
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 15, 35, 20, 1, '', ?, ?, ?)
   `).run(
     'Long Cha',
     'long-cha',
@@ -673,6 +837,7 @@ function seedDatabase() {
       { day: 6, name: 'Sabado', active: true, open: '09:00', close: '22:00' },
       { day: 0, name: 'Domingo', active: true, open: '10:00', close: '20:00' }
     ]),
+    JSON.stringify(DEFAULT_PRINTER_CONFIG),
     createdAt,
     createdAt
   );
@@ -1057,7 +1222,8 @@ function mapBusiness(row) {
     prepDeliveryMinutes: Number(row.prep_delivery_minutes || 35),
     prepDineinMinutes: Number(row.prep_dinein_minutes || 20),
     tableQrEnabled: Boolean(row.table_qr_enabled ?? true),
-    temporaryClosedUntil: row.temporary_closed_until || ''
+    temporaryClosedUntil: row.temporary_closed_until || '',
+    printerConfig: normalizePrinterConfig(parseJson(row.printer_config_json, {}))
   };
 }
 
@@ -1068,12 +1234,14 @@ export function getBusiness() {
 export function updateBusiness(input) {
   const current = getBusiness();
   const hours = Array.isArray(input.hours) ? input.hours : current.hours;
+  const printerConfig = normalizePrinterConfig(input.printerConfig ?? current.printerConfig);
   db.prepare(`
     UPDATE business SET
       name = ?, logo_url = ?, phone = ?, whatsapp_phone = ?, address = ?,
       is_open_manual = ?, allow_orders_outside_hours = ?, closed_message = ?,
       hours_json = ?, prep_pickup_minutes = ?, prep_delivery_minutes = ?,
-      prep_dinein_minutes = ?, table_qr_enabled = ?, temporary_closed_until = ?, updated_at = ?
+      prep_dinein_minutes = ?, table_qr_enabled = ?, temporary_closed_until = ?,
+      printer_config_json = ?, updated_at = ?
     WHERE id = 1
   `).run(
     clean(input.name || current.name, 120),
@@ -1090,6 +1258,7 @@ export function updateBusiness(input) {
     Math.max(0, Number(input.prepDineinMinutes ?? current.prepDineinMinutes)),
     boolInt(input.tableQrEnabled ?? current.tableQrEnabled),
     clean(input.temporaryClosedUntil ?? current.temporaryClosedUntil, 80),
+    JSON.stringify(printerConfig),
     nowIso()
   );
   return getBusiness();
@@ -1761,6 +1930,135 @@ export function updateOrderStatus(orderId, status, userId, note = '') {
     db.exec('ROLLBACK');
     throw error;
   }
+}
+
+function hydratePrintJob(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    orderNumber: row.order_number || '',
+    role: row.role,
+    jobType: row.job_type,
+    status: row.status,
+    attempts: row.attempts,
+    claimedBy: row.claimed_by || '',
+    printerConfig: parseJson(row.printer_config_json, {}),
+    payload: parseJson(row.payload_json, {}),
+    lastError: row.last_error || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    printedAt: row.printed_at || ''
+  };
+}
+
+function validatePrintRole(role) {
+  const value = clean(role, 40);
+  if (!['caja', 'cocina', 'kiosk', 'etiquetas'].includes(value)) {
+    throw new ValidationError('Rol de impresora no valido.');
+  }
+  return value;
+}
+
+export function createPrintJob(input) {
+  return createPrintJobs([input])[0];
+}
+
+export function createPrintJobs(inputs = []) {
+  const jobs = Array.isArray(inputs) ? inputs.filter(Boolean) : [];
+  if (!jobs.length) return [];
+  const createdAt = nowIso();
+  const stmt = db.prepare(`
+    INSERT INTO print_jobs (
+      order_id, order_number, role, job_type, status, attempts, claimed_by,
+      printer_config_json, payload_json, last_error, created_at, updated_at, printed_at
+    ) VALUES (?, ?, ?, ?, 'pending', 0, '', ?, ?, '', ?, ?, '')
+  `);
+  const ids = [];
+  db.exec('BEGIN');
+  try {
+    for (const job of jobs) {
+      const result = stmt.run(
+        job.orderId || null,
+        clean(job.orderNumber, 80),
+        validatePrintRole(job.role),
+        clean(job.jobType || 'ticket', 60),
+        JSON.stringify(job.printerConfig || {}),
+        JSON.stringify(job.payload || {}),
+        createdAt,
+        createdAt
+      );
+      ids.push(Number(result.lastInsertRowid));
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  return ids.map((id) => getPrintJobById(id));
+}
+
+export function getPrintJobById(jobId) {
+  return hydratePrintJob(db.prepare('SELECT * FROM print_jobs WHERE id = ?').get(Number(jobId)));
+}
+
+export function claimPrintJobs({ agentId = '', limit = 5 } = {}) {
+  const claimedBy = clean(agentId || 'print-agent', 120);
+  const max = Math.max(1, Math.min(20, Number(limit || 5)));
+  const updatedAt = nowIso();
+  const rows = db.prepare(`
+    SELECT * FROM print_jobs
+    WHERE status IN ('pending', 'failed') AND attempts < 5
+    ORDER BY created_at ASC
+    LIMIT ?
+  `).all(max);
+  if (!rows.length) return [];
+  const ids = rows.map((row) => row.id);
+  const update = db.prepare(`
+    UPDATE print_jobs
+    SET status = 'claimed', attempts = attempts + 1, claimed_by = ?, updated_at = ?
+    WHERE id = ?
+  `);
+  db.exec('BEGIN');
+  try {
+    ids.forEach((id) => update.run(claimedBy, updatedAt, id));
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  return ids.map((id) => getPrintJobById(id));
+}
+
+export function completePrintJob(jobId, agentId = '') {
+  const printedAt = nowIso();
+  db.prepare(`
+    UPDATE print_jobs
+    SET status = 'printed', claimed_by = ?, updated_at = ?, printed_at = ?, last_error = ''
+    WHERE id = ?
+  `).run(clean(agentId || 'print-agent', 120), printedAt, printedAt, Number(jobId));
+  return getPrintJobById(jobId);
+}
+
+export function failPrintJob(jobId, agentId = '', error = '') {
+  const current = getPrintJobById(jobId);
+  if (!current) throw new ValidationError('Trabajo de impresion no encontrado.', 404);
+  const status = Number(current.attempts || 0) >= 5 ? 'cancelled' : 'failed';
+  db.prepare(`
+    UPDATE print_jobs
+    SET status = ?, claimed_by = ?, updated_at = ?, last_error = ?
+    WHERE id = ?
+  `).run(status, clean(agentId || 'print-agent', 120), nowIso(), clean(error, 800), Number(jobId));
+  return getPrintJobById(jobId);
+}
+
+export function listPrintJobs({ status = '', limit = 80 } = {}) {
+  const max = Math.max(1, Math.min(300, Number(limit || 80)));
+  const wanted = clean(status, 40);
+  const rows = wanted
+    ? db.prepare('SELECT * FROM print_jobs WHERE status = ? ORDER BY created_at DESC LIMIT ?').all(wanted, max)
+    : db.prepare('SELECT * FROM print_jobs ORDER BY created_at DESC LIMIT ?').all(max);
+  return rows.map((row) => hydratePrintJob(row));
 }
 
 export function getAdminCatalog() {

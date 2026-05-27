@@ -2458,6 +2458,52 @@ button {
   padding-top: 0;
 }
 
+.printer-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.printer-detection-status {
+  border: 1px dashed rgba(20, 110, 67, 0.28);
+  border-radius: var(--radius);
+  background: #fffaf0;
+  color: #16483b;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 0.88rem;
+  font-weight: 750;
+}
+
+.printer-role {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: #fff;
+  display: grid;
+  gap: 12px;
+}
+
+.printer-role > header {
+  margin: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.printer-role > header div {
+  display: grid;
+  gap: 3px;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  font-weight: 800;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
 .schedule-grid {
   display: grid;
   gap: 8px;
@@ -3038,6 +3084,92 @@ body[data-page="kiosk"] {
   font-size: 1.14rem;
 }
 
+.kiosk-start {
+  min-height: calc(100vh - 78px);
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: clamp(28px, 6vw, 72px) 0 40px;
+  display: grid;
+  align-content: center;
+  gap: clamp(24px, 4vw, 42px);
+}
+
+.kiosk-start[hidden],
+.kiosk-layout[hidden] {
+  display: none !important;
+}
+
+.kiosk-start__copy {
+  text-align: center;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.kiosk-start__copy h1 {
+  margin: 0;
+  max-width: 900px;
+  font-size: clamp(3rem, 7vw, 6.6rem);
+  line-height: 0.96;
+}
+
+.kiosk-start__copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(1.05rem, 1.7vw, 1.45rem);
+  font-weight: 750;
+}
+
+.kiosk-start__options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(16px, 3vw, 28px);
+}
+
+.kiosk-start-option {
+  min-height: clamp(230px, 32vh, 360px);
+  border: 2px solid rgba(20, 110, 67, 0.18);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 18px 38px rgba(20, 20, 20, 0.1);
+  padding: clamp(22px, 3vw, 34px);
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.kiosk-start-option:active {
+  transform: scale(0.99);
+}
+
+.kiosk-start-option__icon {
+  width: clamp(82px, 10vw, 120px);
+  height: clamp(82px, 10vw, 120px);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--brand);
+  color: #fff;
+  font-size: clamp(1.5rem, 2.8vw, 2.4rem);
+  font-weight: 950;
+}
+
+.kiosk-start-option strong {
+  font-size: clamp(1.7rem, 3.2vw, 3rem);
+  line-height: 1;
+}
+
+.kiosk-start-option small {
+  max-width: 320px;
+  color: var(--muted);
+  font-size: clamp(0.98rem, 1.4vw, 1.18rem);
+  font-weight: 760;
+  line-height: 1.35;
+}
+
 .kiosk-layout {
   width: min(1480px, calc(100% - 28px));
   margin: 0 auto;
@@ -3278,6 +3410,28 @@ body[data-page="kiosk"] {
   color: rgba(255, 255, 255, 0.8);
 }
 
+.kiosk-service-summary {
+  border: 1px solid rgba(20, 110, 67, 0.22);
+  border-radius: var(--radius);
+  background: #fffaf0;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.kiosk-service-summary div {
+  display: grid;
+  gap: 2px;
+}
+
+.kiosk-service-summary span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
 .kiosk-cart-lines {
   max-height: min(38vh, 390px);
   overflow-y: auto;
@@ -3471,6 +3625,11 @@ body[data-page="kiosk"] {
   display: none;
 }
 
+@page label-2x1 {
+  size: 2in 1in;
+  margin: 0;
+}
+
 @media print {
   body * {
     visibility: hidden;
@@ -3485,12 +3644,86 @@ body[data-page="kiosk"] {
     display: block;
     position: absolute;
     inset: 0 auto auto 0;
-    width: 80mm;
+    width: var(--ticket-width, 80mm);
     padding: 4mm;
     background: #fff;
     color: #000;
     font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
     font-size: 11px;
+  }
+
+  #ticketPrint[data-print-layout="labels-2x1"] {
+    width: var(--label-width, 2in);
+    padding: 0;
+    font-family: "Figtree", Arial, sans-serif;
+    font-size: 7px;
+  }
+
+  #ticketPrint[data-print-layout="labels-2x1"] .label-sheet {
+    display: block;
+  }
+
+  #ticketPrint[data-print-layout="labels-2x1"] .drink-label {
+    width: var(--label-width, 2in);
+    height: var(--label-height, 1in);
+    page: label-2x1;
+    break-after: page;
+    page-break-after: always;
+    overflow: hidden;
+    padding: 0.07in;
+    display: grid;
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    gap: 0.025in;
+    background: #fff;
+    color: #000;
+  }
+
+  #ticketPrint[data-print-layout="labels-2x1"] .drink-label header,
+  #ticketPrint[data-print-layout="labels-2x1"] .drink-label footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.05in;
+    align-items: center;
+    border-bottom: 1px solid #000;
+    padding-bottom: 0.015in;
+    font-weight: 800;
+  }
+
+  #ticketPrint[data-print-layout="labels-2x1"] .drink-label footer {
+    border-top: 1px solid #000;
+    border-bottom: 0;
+    padding-top: 0.015in;
+    padding-bottom: 0;
+  }
+
+  #ticketPrint[data-print-layout="labels-2x1"] .drink-label h2 {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1;
+    font-family: "Figtree", Arial, sans-serif;
+    font-weight: 900;
+  }
+
+  #ticketPrint[data-print-layout="labels-2x1"] .drink-label__meta {
+    font-size: 7px;
+    font-weight: 800;
+    line-height: 1.05;
+  }
+
+  #ticketPrint[data-print-layout="labels-2x1"] .drink-label__mods {
+    display: grid;
+    align-content: start;
+    gap: 0.01in;
+    font-size: 7px;
+    line-height: 1.06;
+    overflow: hidden;
+  }
+
+  #ticketPrint[data-print-layout="labels-2x1"] .drink-label__mods span {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 
@@ -3554,6 +3787,10 @@ body[data-page="kiosk"] {
   .kiosk-product-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .kiosk-start__options {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -3595,6 +3832,15 @@ body[data-page="kiosk"] {
   .kiosk-layout {
     width: min(100% - 22px, 1180px);
     padding-top: 12px;
+  }
+
+  .kiosk-start {
+    width: min(100% - 22px, 1180px);
+    min-height: calc(100vh - 118px);
+  }
+
+  .kiosk-start-option {
+    min-height: 190px;
   }
 
   .kiosk-hero {

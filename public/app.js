@@ -5,6 +5,56 @@ const LAST_WHATSAPP_KEY = 'qr-food-pos-last-whatsapp-url';
 const CUSTOMER_ORDERS_KEY = 'qr-food-pos-customer-orders';
 const TABLE_KEY = 'qr-food-pos-table';
 const DEFAULT_KIOSK_IDLE_SECONDS = 75;
+const DEFAULT_PRINTER_CONFIG = {
+  printers: {
+    caja: {
+      enabled: true,
+      name: 'Caja',
+      type: 'thermal',
+      ticketWidthMm: 80,
+      connectionMode: 'browser',
+      systemPrinterName: '',
+      networkHost: '',
+      networkPort: 9100
+    },
+    cocina: {
+      enabled: true,
+      name: 'Cocina',
+      type: 'thermal',
+      ticketWidthMm: 80,
+      connectionMode: 'browser',
+      systemPrinterName: '',
+      networkHost: '',
+      networkPort: 9100
+    },
+    kiosk: {
+      enabled: true,
+      name: 'Kiosko',
+      type: 'thermal',
+      ticketWidthMm: 80,
+      connectionMode: 'browser',
+      systemPrinterName: '',
+      networkHost: '',
+      networkPort: 9100,
+      printOrderNumberOnly: true
+    },
+    etiquetas: {
+      enabled: true,
+      name: 'Zebra vasos',
+      type: 'zebra-label',
+      labelWidthIn: 2,
+      labelHeightIn: 1,
+      copiesPerDrink: 1,
+      connectionMode: 'browser',
+      systemPrinterName: '',
+      networkHost: '',
+      networkPort: 9100,
+      includePrice: false,
+      autoPrintFromKiosk: false
+    }
+  },
+  labelDrinkCategorySlugs: ['milk-tea', 'smoothies', 'iced-coffee', 'refreshers']
+};
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -720,6 +770,58 @@ function kioskPaymentHelper(method) {
   return String(method.instructions || 'Pago en caja').replace(/o contra entrega\.?/i, '').trim();
 }
 
+function kioskMethodForServiceMode(state, mode) {
+  const methods = state.deliveryMethods || [];
+  const matcher = mode === 'local'
+    ? (method) => {
+      const slug = normalizedName(method.slug);
+      const name = normalizedName(method.name);
+      return ['local', 'comer-en-local', 'comer-aqui'].includes(slug) || name.includes('local') || name.includes('comer');
+    }
+    : (method) => {
+      const slug = normalizedName(method.slug);
+      const name = normalizedName(method.name);
+      return ['retiro', 'takeaway', 'para-llevar', 'retiro-en-tienda'].includes(slug) || name.includes('retiro') || name.includes('llevar');
+    };
+  return methods.find(matcher) || methods[0];
+}
+
+function kioskServiceLabel(state) {
+  const method = (state.deliveryMethods || []).find((item) => Number(item.id) === Number(state.deliveryMethodId));
+  const mode = state.serviceMode || (normalizedName(method?.slug) === 'local' ? 'local' : 'takeaway');
+  return {
+    title: mode === 'local' ? 'Comer aqui' : 'Para llevar',
+    detail: method?.name || (mode === 'local' ? 'Comer en local' : 'Retiro en tienda')
+  };
+}
+
+function showKioskStart(state, reset = false) {
+  const start = $('#kioskStart');
+  const main = $('#kioskMain');
+  if (!start || !main) return;
+  if (reset) {
+    state.serviceMode = '';
+    state.deliveryMethodId = null;
+    $('#kioskCustomerName').value = '';
+    $('#kioskTableLabel').value = getTableLabel() || 'Kiosko';
+  }
+  start.hidden = false;
+  main.hidden = true;
+  window.scrollTo(0, 0);
+}
+
+function enterKioskMenu(state, mode) {
+  const method = kioskMethodForServiceMode(state, mode);
+  state.serviceMode = mode;
+  state.deliveryMethodId = method?.id || state.deliveryMethodId;
+  const start = $('#kioskStart');
+  const main = $('#kioskMain');
+  if (start) start.hidden = true;
+  if (main) main.hidden = false;
+  renderKioskOrder(state);
+  window.scrollTo(0, 0);
+}
+
 function kioskIdleMilliseconds() {
   const rawSeconds = Number(new URLSearchParams(location.search).get('idle'));
   const seconds = Number.isFinite(rawSeconds) && rawSeconds > 0 ? rawSeconds : DEFAULT_KIOSK_IDLE_SECONDS;
@@ -816,7 +918,16 @@ function renderKioskCategories(state) {
 
 function renderKioskOrder(state) {
   const cart = getCart();
-  $('#kioskDeliveryOptions').innerHTML = state.deliveryMethods
+  const service = kioskServiceLabel(state);
+  $('#kioskDeliveryOptions').innerHTML = state.serviceMode ? `
+    <div class="kiosk-service-summary">
+      <div>
+        <strong>${escapeHtml(service.title)}</strong>
+        <span>${escapeHtml(service.detail)}</span>
+      </div>
+      <button class="btn btn--ghost btn--small" type="button" data-kiosk-change-service>Cambiar</button>
+    </div>
+  ` : state.deliveryMethods
     .map((method) => kioskMethodButton(
       method,
       state.deliveryMethodId,
@@ -841,20 +952,163 @@ function updateKioskClock() {
   }).format(new Date());
 }
 
-function kioskTicketModifierLines(item) {
-  const variants = Object.entries(item.variants || {}).map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(value)}`);
-  const extras = (item.extras || []).map((extra) => `+ ${escapeHtml(extra.name)}${extra.priceCents ? ` ${money(extra.priceCents)}` : ''}`);
-  return [...variants, ...extras].join('<br>');
+function printerTicketWidth(value, fallback = 80) {
+  const width = Number(value);
+  return [58, 80].includes(width) ? width : fallback;
 }
 
-function printKioskTicket(order, ticket = {}) {
+function printerConnectionMode(value, fallback = 'browser') {
+  return ['browser', 'system', 'network'].includes(value) ? value : fallback;
+}
+
+function printerPort(value, fallback = 9100) {
+  const port = Math.round(Number(value));
+  return port >= 1 && port <= 65535 ? port : fallback;
+}
+
+function printerRange(value, min, max, fallback, round = false) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return fallback;
+  const clamped = Math.min(max, Math.max(min, number));
+  return round ? Math.round(clamped) : clamped;
+}
+
+function normalizeFrontendThermalPrinter(input, defaults, legacy = {}) {
+  const config = input && typeof input === 'object' ? input : {};
+  return {
+    ...defaults,
+    ...config,
+    enabled: Boolean(config.enabled ?? legacy.enabled ?? defaults.enabled),
+    type: 'thermal',
+    ticketWidthMm: printerTicketWidth(config.ticketWidthMm ?? legacy.ticketWidthMm, defaults.ticketWidthMm),
+    connectionMode: printerConnectionMode(config.connectionMode ?? legacy.connectionMode, defaults.connectionMode),
+    systemPrinterName: String(config.systemPrinterName ?? legacy.systemPrinterName ?? defaults.systemPrinterName ?? ''),
+    networkHost: String(config.networkHost ?? legacy.networkHost ?? defaults.networkHost ?? ''),
+    networkPort: printerPort(config.networkPort ?? legacy.networkPort, defaults.networkPort)
+  };
+}
+
+function normalizeFrontendLabelPrinter(input, defaults, legacy = {}) {
+  const config = input && typeof input === 'object' ? input : {};
+  return {
+    ...defaults,
+    ...config,
+    enabled: Boolean(config.enabled ?? legacy.enabled ?? defaults.enabled),
+    type: 'zebra-label',
+    labelWidthIn: printerRange(config.labelWidthIn ?? legacy.labelWidthIn, 1, 4, defaults.labelWidthIn),
+    labelHeightIn: printerRange(config.labelHeightIn ?? legacy.labelHeightIn, 0.5, 3, defaults.labelHeightIn),
+    copiesPerDrink: printerRange(config.copiesPerDrink ?? legacy.copiesPerDrink, 1, 5, defaults.copiesPerDrink, true),
+    connectionMode: printerConnectionMode(config.connectionMode ?? legacy.connectionMode, defaults.connectionMode),
+    systemPrinterName: String(config.systemPrinterName ?? legacy.systemPrinterName ?? defaults.systemPrinterName ?? ''),
+    networkHost: String(config.networkHost ?? legacy.networkHost ?? defaults.networkHost ?? ''),
+    networkPort: printerPort(config.networkPort ?? legacy.networkPort, defaults.networkPort),
+    includePrice: Boolean(config.includePrice ?? legacy.includePrice ?? defaults.includePrice),
+    autoPrintFromKiosk: Boolean(config.autoPrintFromKiosk ?? legacy.autoPrintFromKiosk ?? defaults.autoPrintFromKiosk)
+  };
+}
+
+function normalizeFrontendPrinterConfig(input = {}) {
+  const config = input && typeof input === 'object' ? input : {};
+  const printers = config.printers && typeof config.printers === 'object' ? config.printers : {};
+  return {
+    printers: {
+      caja: normalizeFrontendThermalPrinter(printers.caja, DEFAULT_PRINTER_CONFIG.printers.caja, {
+        enabled: config.ticketPrinterEnabled,
+        ticketWidthMm: config.ticketWidthMm
+      }),
+      cocina: normalizeFrontendThermalPrinter(printers.cocina, DEFAULT_PRINTER_CONFIG.printers.cocina, {
+        enabled: config.ticketPrinterEnabled,
+        ticketWidthMm: config.ticketWidthMm
+      }),
+      kiosk: normalizeFrontendThermalPrinter(printers.kiosk, DEFAULT_PRINTER_CONFIG.printers.kiosk, {
+        enabled: config.ticketPrinterEnabled,
+        ticketWidthMm: config.ticketWidthMm
+      }),
+      etiquetas: normalizeFrontendLabelPrinter(printers.etiquetas, DEFAULT_PRINTER_CONFIG.printers.etiquetas, {
+        enabled: config.labelPrinterEnabled,
+        labelWidthIn: config.labelWidthIn,
+        labelHeightIn: config.labelHeightIn,
+        copiesPerDrink: config.labelCopiesPerDrink,
+        includePrice: config.labelIncludePrice,
+        autoPrintFromKiosk: config.labelAutoPrintFromKiosk
+      })
+    },
+    labelDrinkCategorySlugs: Array.isArray(config.labelDrinkCategorySlugs)
+      ? config.labelDrinkCategorySlugs
+      : DEFAULT_PRINTER_CONFIG.labelDrinkCategorySlugs
+  };
+}
+
+function kioskPrinterConfig(stateOrMenu) {
+  const business = stateOrMenu?.menu?.business || stateOrMenu?.business || {};
+  return normalizeFrontendPrinterConfig(business.printerConfig || {});
+}
+
+function cartItemCustomizationParts(item) {
+  const variants = Object.entries(item.variants || {}).map(([key, value]) => `${key}: ${value}`);
+  const options = (item.optionSelections || [])
+    .flatMap((selection) => (selection.options || []).map((option) => `${selection.groupName}: ${option.name}`));
+  const extras = (item.extrasData || []).map((extra) => `Extra: ${extra.name}`);
+  return [...variants, ...options, ...extras].filter(Boolean);
+}
+
+function orderItemModifierParts(item, includePrices = true) {
+  const variants = Object.entries(item.variants || {}).map(([key, value]) => `${key}: ${value}`);
+  const extras = (item.extras || []).map((extra) => {
+    const group = extra.groupName ? `${extra.groupName}: ` : '+ ';
+    const price = includePrices && extra.priceCents ? ` ${money(extra.priceCents)}` : '';
+    return `${group}${extra.name}${price}`;
+  });
+  return [...variants, ...extras].filter(Boolean);
+}
+
+function printModifierLines(parts) {
+  return parts.map((part) => escapeHtml(part)).join('<br>');
+}
+
+function preparePrintTarget(layout, config = {}) {
+  const target = $('#ticketPrint');
+  if (!target) return null;
+  target.dataset.printLayout = layout;
+  target.style.setProperty('--ticket-width', `${Number(config.ticketWidthMm || 80)}mm`);
+  target.style.setProperty('--label-width', `${Number(config.labelWidthIn || 2)}in`);
+  target.style.setProperty('--label-height', `${Number(config.labelHeightIn || 1)}in`);
+  target.innerHTML = '';
+  return target;
+}
+
+function kioskDrinkLabelItems(cart, state) {
+  const config = kioskPrinterConfig(state);
+  const drinkSlugs = new Set((config.labelDrinkCategorySlugs || []).map(normalizedName));
+  return cart
+    .map((item) => {
+      const product = state.menu.products.find((productItem) => Number(productItem.id) === Number(item.productId));
+      return { item, product };
+    })
+    .filter(({ product }) => product && drinkSlugs.has(normalizedName(product.categorySlug)))
+    .map(({ item, product }) => ({
+      productId: item.productId,
+      productName: item.name,
+      categoryName: product.categoryName,
+      categorySlug: product.categorySlug,
+      quantity: Number(item.quantity || 1),
+      lineTotalCents: lineTotalCents(item),
+      modifiers: cartItemCustomizationParts(item)
+    }));
+}
+
+function printKioskTicket(order, ticket = {}, type = 'payment') {
+  const config = normalizeFrontendPrinterConfig(ticket.printerConfig || {});
+  const printer = type === 'kitchen' ? config.printers.cocina : config.printers.caja;
+  const target = preparePrintTarget('ticket', printer);
+  if (!target) return;
   const businessName = $('[data-business-name]')?.textContent || 'Long Cha';
   const customerName = ticket.customerName || order.customer?.name || 'Cliente local';
   const tableLabel = ticket.tableLabel || order.tableLabel || '';
-  $('#ticketPrint').innerHTML = `
+  const isKitchen = type === 'kitchen';
+  target.innerHTML = `
     <div style="text-align:center">
-      <strong>${escapeHtml(businessName)}</strong><br>
-      KIOSKO<br>
+      <strong>${escapeHtml(isKitchen ? 'PEDIDO KIOSKO' : businessName)}</strong><br>
       Pedido ${escapeHtml(order.orderNumber)}<br>
       ${new Date(order.createdAt || Date.now()).toLocaleString()}
     </div>
@@ -862,21 +1116,108 @@ function printKioskTicket(order, ticket = {}) {
     Cliente: ${escapeHtml(customerName)}<br>
     ${tableLabel ? `Mesa/ref: ${escapeHtml(tableLabel)}<br>` : ''}
     Entrega: ${escapeHtml(order.deliveryMethod?.name || '')}<br>
-    Pago: ${escapeHtml(order.paymentMethod?.name || '')}<br>
+    ${isKitchen ? '' : `Pago: ${escapeHtml(order.paymentMethod?.name || '')}<br>`}
     <hr>
     ${(order.items || []).map((item) => `
-      <strong>${item.quantity} x ${escapeHtml(item.productName)}</strong> ${escapeHtml(item.lineTotal || '')}<br>
-      ${kioskTicketModifierLines(item)}
+      <strong>${item.quantity} x ${escapeHtml(item.productName)}</strong>${isKitchen ? '' : ` ${escapeHtml(item.lineTotal || '')}`}<br>
+      ${printModifierLines(orderItemModifierParts(item, !isKitchen))}
     `).join('<br>')}
     <hr>
-    <strong>Total: ${money(order.totalCents)}</strong><br>
+    ${isKitchen ? '' : `<strong>Total: ${money(order.totalCents)}</strong><br>`}
     Estado: ${escapeHtml(order.status || 'Nuevo')}
+  `;
+  window.print();
+}
+
+function printKioskOrderNumber(order, ticket = {}) {
+  const config = normalizeFrontendPrinterConfig(ticket.printerConfig || {});
+  const target = preparePrintTarget('ticket', config.printers.kiosk);
+  if (!target) return;
+  const businessName = $('[data-business-name]')?.textContent || 'Long Cha';
+  const customerName = ticket.customerName || order.customer?.name || 'Cliente local';
+  const tableLabel = ticket.tableLabel || order.tableLabel || '';
+  target.innerHTML = `
+    <div style="text-align:center">
+      <strong>${escapeHtml(businessName)}</strong><br>
+      <span>NUMERO DE ORDEN</span>
+    </div>
+    <div style="text-align:center;font-size:28px;font-weight:900;line-height:1.1;margin:8px 0 10px">
+      ${escapeHtml(order.orderNumber)}
+    </div>
+    <div style="text-align:center">
+      ${escapeHtml(customerName)}<br>
+      ${tableLabel ? `Mesa/ref: ${escapeHtml(tableLabel)}<br>` : ''}
+      ${new Date(order.createdAt || Date.now()).toLocaleString()}
+    </div>
+    <hr>
+    <div style="text-align:center">
+      Conserva este numero para retirar tu pedido.
+    </div>
+  `;
+  window.print();
+}
+
+function expandDrinkLabels(order, ticket = {}) {
+  const config = normalizeFrontendPrinterConfig(ticket.printerConfig || {});
+  const labelPrinter = config.printers.etiquetas;
+  const copies = Math.max(1, Number(labelPrinter.copiesPerDrink || 1));
+  const labels = [];
+  for (const item of ticket.labelItems || []) {
+    for (let quantityIndex = 0; quantityIndex < Number(item.quantity || 1); quantityIndex += 1) {
+      for (let copyIndex = 0; copyIndex < copies; copyIndex += 1) {
+        labels.push({
+          ...item,
+          orderNumber: order.orderNumber,
+          unitIndex: quantityIndex + 1,
+          copyIndex: copyIndex + 1
+        });
+      }
+    }
+  }
+  return labels;
+}
+
+function printKioskDrinkLabels(order, ticket = {}) {
+  const config = normalizeFrontendPrinterConfig(ticket.printerConfig || {});
+  const labelPrinter = config.printers.etiquetas;
+  const labels = expandDrinkLabels(order, ticket);
+  if (!labels.length) {
+    showToast('Este pedido no tiene bebidas para etiquetar.');
+    return;
+  }
+  const target = preparePrintTarget('labels-2x1', labelPrinter);
+  if (!target) return;
+  const customerName = ticket.customerName || 'Cliente local';
+  const tableLabel = ticket.tableLabel || '';
+  target.innerHTML = `
+    <div class="label-sheet">
+      ${labels.map((label, index) => `
+        <section class="drink-label">
+          <header>
+            <strong>${escapeHtml(order.orderNumber)}</strong>
+            <span>${index + 1}/${labels.length}</span>
+          </header>
+          <h2>${escapeHtml(label.productName)}</h2>
+          <div class="drink-label__meta">
+            ${escapeHtml(customerName)}${tableLabel ? ` - ${escapeHtml(tableLabel)}` : ''}${label.quantity > 1 ? ` - ${label.unitIndex}/${label.quantity}` : ''}
+          </div>
+          <div class="drink-label__mods">
+            ${label.modifiers.length ? label.modifiers.map((part) => `<span>${escapeHtml(part)}</span>`).join('') : '<span>Sin modificaciones</span>'}
+          </div>
+          <footer>
+            <span>${escapeHtml(label.categoryName || 'Bebida')}</span>
+            ${labelPrinter.includePrice ? `<strong>${money(label.lineTotalCents / Number(label.quantity || 1))}</strong>` : ''}
+          </footer>
+        </section>
+      `).join('')}
+    </div>
   `;
   window.print();
 }
 
 function openKioskSuccess(order, ticket = {}) {
   const dialog = $('#kioskSuccessDialog');
+  const config = normalizeFrontendPrinterConfig(ticket.printerConfig || {});
   dialog.innerHTML = `
     <div class="dialog__body kiosk-success">
       <img src="/assets/brand/longcha-mark.png" alt="Long Cha">
@@ -884,19 +1225,20 @@ function openKioskSuccess(order, ticket = {}) {
       <h2>${escapeHtml(order.orderNumber)}</h2>
       <p>Tu orden ya fue enviada a cocina. Conserva este numero y pasa a caja si falta completar el pago.</p>
       <div class="kiosk-success-actions">
-        <button class="btn btn--brand" type="button" data-kiosk-print-ticket>Imprimir ticket</button>
+        ${config.printers.kiosk.enabled ? '<button class="btn btn--brand" type="button" data-kiosk-print-order-number>Imprimir numero de orden</button>' : ''}
         <button class="btn btn--ghost" type="button" data-kiosk-new-order>Hacer otro pedido</button>
       </div>
     </div>
   `;
   dialog.onclick = (event) => {
-    if (event.target.closest('[data-kiosk-print-ticket]')) {
-      printKioskTicket(order, ticket);
+    if (event.target.closest('[data-kiosk-print-order-number]')) {
+      printKioskOrderNumber(order, ticket);
       return;
     }
     if (!event.target.closest('[data-kiosk-new-order]')) return;
     dialog.close();
     $('#kioskCustomerName').value = '';
+    if (typeof ticket.onNewOrder === 'function') ticket.onNewOrder();
     showToast('Listo para un nuevo pedido');
   };
   dialog.showModal();
@@ -908,11 +1250,18 @@ async function submitKioskOrder(state) {
     showToast('Agrega productos antes de enviar.');
     return;
   }
+  if (!state.deliveryMethodId || !state.serviceMode) {
+    showToast('Selecciona si es para llevar o comer aqui.');
+    showKioskStart(state);
+    return;
+  }
   const form = $('#kioskOrderForm');
   if (!form.reportValidity()) return;
   const submit = $('#kioskSubmit');
   const tableLabel = ($('#kioskTableLabel').value || '').trim();
   const customerName = ($('#kioskCustomerName').value || '').trim();
+  const printerConfig = kioskPrinterConfig(state);
+  const labelItems = kioskDrinkLabelItems(cart, state);
   if (tableLabel) localStorage.setItem(TABLE_KEY, tableLabel);
   submit.disabled = true;
   submit.textContent = 'Enviando pedido...';
@@ -943,7 +1292,13 @@ async function submitKioskOrder(state) {
     localStorage.setItem(LAST_ORDER_KEY, result.order.orderNumber);
     localStorage.removeItem(cartStorageKey());
     renderKioskOrder(state);
-    openKioskSuccess(result.order, { customerName, tableLabel });
+    openKioskSuccess(result.order, {
+      customerName,
+      tableLabel,
+      printerConfig,
+      labelItems,
+      onNewOrder: () => showKioskStart(state, true)
+    });
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -966,7 +1321,8 @@ async function initKiosk() {
     paymentMethods,
     category: 'all',
     search: '',
-    deliveryMethodId: (deliveryMethods.find((method) => method.slug === 'local') || deliveryMethods[0])?.id,
+    serviceMode: '',
+    deliveryMethodId: null,
     paymentMethodId: (paymentMethods.find((method) => method.slug === 'efectivo') || paymentMethods[0])?.id
   };
 
@@ -975,10 +1331,16 @@ async function initKiosk() {
   renderKioskCategories(state);
   renderKioskProducts(state);
   renderKioskOrder(state);
+  showKioskStart(state);
   updateKioskClock();
   setInterval(updateKioskClock, 30000);
   setupKioskScreensaver();
 
+  $('#kioskStart').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-kiosk-service-mode]');
+    if (!button) return;
+    enterKioskMenu(state, button.dataset.kioskServiceMode);
+  });
   $('#kioskSearch').addEventListener('input', (event) => {
     state.search = event.target.value.toLowerCase();
     renderKioskProducts(state);
@@ -1006,7 +1368,12 @@ async function initKiosk() {
     const delivery = event.target.closest('[data-kiosk-delivery]');
     if (delivery) {
       state.deliveryMethodId = Number(delivery.dataset.kioskDelivery);
+      state.serviceMode = normalizedName(delivery.textContent).includes('comer') ? 'local' : 'takeaway';
       renderKioskOrder(state);
+      return;
+    }
+    if (event.target.closest('[data-kiosk-change-service]')) {
+      showKioskStart(state);
       return;
     }
     const payment = event.target.closest('[data-kiosk-payment]');
