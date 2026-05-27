@@ -15,7 +15,12 @@ const state = {
   deliveryConfig: null,
   business: null,
   orderEvents: null,
-  realtimeConnected: false
+  realtimeConnected: false,
+  orderAlert: {
+    context: null,
+    timer: null,
+    active: false
+  }
 };
 
 function escapeHtml(value) {
@@ -123,6 +128,7 @@ async function initAdmin() {
     await api('/api/auth/logout', { method: 'POST' });
     location.href = '/admin/login';
   });
+  setupOrderAlertUnlock();
 
   $('#adminNav').addEventListener('click', (event) => {
     const link = event.target.closest('a[data-section]');
@@ -196,9 +202,8 @@ async function pollOrders() {
     const hasNew = [...currentNew].some((orderNumber) => !state.knownNewOrders.has(orderNumber));
     if (state.knownNewOrders.size && hasNew) {
       showToast('Nuevo pedido recibido');
-      beep();
     }
-    state.knownNewOrders = currentNew;
+    syncNewOrderAlert(currentNew);
     if (state.section === 'orders') renderOrders(data.orders);
     if (state.section === 'kds') renderKds();
     if (state.section === 'dashboard') renderDashboard();
@@ -213,7 +218,7 @@ function connectAdminEvents() {
   state.orderEvents.addEventListener('orders.snapshot', (event) => {
     state.realtimeConnected = true;
     const data = JSON.parse(event.data);
-    state.knownNewOrders = new Set((data.orders || []).filter((order) => order.status === 'Nuevo').map((order) => order.orderNumber));
+    syncNewOrderAlert(new Set((data.orders || []).filter((order) => order.status === 'Nuevo').map((order) => order.orderNumber)));
   });
   state.orderEvents.addEventListener('order.created', (event) => handleRealtimeOrderEvent(event, true));
   state.orderEvents.addEventListener('order.updated', (event) => handleRealtimeOrderEvent(event, false));
@@ -228,34 +233,117 @@ async function handleRealtimeOrderEvent(event, isNewOrder) {
   if (!order) return;
   const wasKnown = state.knownNewOrders.has(order.orderNumber);
   if (order.status === 'Nuevo') state.knownNewOrders.add(order.orderNumber);
+  else state.knownNewOrders.delete(order.orderNumber);
   if (isNewOrder || (order.status === 'Nuevo' && !wasKnown)) {
     showToast('Nuevo pedido recibido');
-    beep();
   } else {
     showToast(`Pedido ${order.orderNumber}: ${order.status}`);
   }
+  syncNewOrderAlert(state.knownNewOrders);
   if (['dashboard', 'orders', 'kds'].includes(state.section)) {
     await renderCurrentSection();
   }
 }
 
-function beep() {
+function setupOrderAlertUnlock() {
+  const unlock = () => {
+    const context = getOrderAlertContext();
+    if (context?.state === 'suspended') context.resume().catch(() => {});
+    if (state.orderAlert.active) playOrderAlertTone();
+  };
+  window.addEventListener('pointerdown', unlock, { passive: true });
+  window.addEventListener('keydown', unlock);
+}
+
+function syncNewOrderAlert(currentNewOrders) {
+  state.knownNewOrders = new Set(currentNewOrders || []);
+  if (state.knownNewOrders.size) startOrderAlert();
+  else stopOrderAlert();
+}
+
+function getOrderAlertContext() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  if (!state.orderAlert.context || state.orderAlert.context.state === 'closed') {
+    state.orderAlert.context = new AudioContextClass();
+  }
+  return state.orderAlert.context;
+}
+
+function startOrderAlert() {
+  if (state.orderAlert.active) return;
+  state.orderAlert.active = true;
+  playOrderAlertTone();
+  state.orderAlert.timer = setInterval(playOrderAlertTone, 1600);
+}
+
+function stopOrderAlert() {
+  state.orderAlert.active = false;
+  if (state.orderAlert.timer) clearInterval(state.orderAlert.timer);
+  state.orderAlert.timer = null;
+}
+
+function playOrderAlertTone() {
+  if (!state.orderAlert.active) return;
   try {
-    const context = new AudioContext();
-    const osc = context.createOscillator();
-    const gain = context.createGain();
-    osc.frequency.value = 880;
-    gain.gain.value = 0.05;
-    osc.connect(gain);
-    gain.connect(context.destination);
-    osc.start();
+    const context = getOrderAlertContext();
+    if (!context) return;
+    if (context.state === 'suspended') {
+      context.resume().catch(() => {});
+      return;
+    }
+    const now = context.currentTime;
+    const master = context.createGain();
+    const limiter = context.createDynamicsCompressor();
+    limiter.threshold.setValueAtTime(-10, now);
+    limiter.knee.setValueAtTime(6, now);
+    limiter.ratio.setValueAtTime(14, now);
+    limiter.attack.setValueAtTime(0.003, now);
+    limiter.release.setValueAtTime(0.18, now);
+    master.gain.setValueAtTime(0.95, now);
+    master.connect(limiter);
+    limiter.connect(context.destination);
+
+    [
+      [988, 0, 0.13, 0.34],
+      [1319, 0.16, 0.13, 0.4],
+      [1568, 0.32, 0.16, 0.42],
+      [1319, 0.55, 0.12, 0.34],
+      [1760, 0.72, 0.24, 0.48]
+    ].forEach(([frequency, offset, duration, volume]) => {
+      playOrderAlertNote(context, master, frequency, now + offset, duration, volume);
+    });
     setTimeout(() => {
-      osc.stop();
-      context.close();
-    }, 180);
+      master.disconnect();
+      limiter.disconnect();
+    }, 1250);
   } catch {
     /* audio puede requerir gesto del usuario */
   }
+}
+
+function playOrderAlertNote(context, output, frequency, startTime, duration, volume) {
+  const noteGain = context.createGain();
+  noteGain.gain.setValueAtTime(0.0001, startTime);
+  noteGain.gain.exponentialRampToValueAtTime(volume, startTime + 0.012);
+  noteGain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+  noteGain.connect(output);
+
+  const body = context.createOscillator();
+  body.type = 'triangle';
+  body.frequency.setValueAtTime(frequency, startTime);
+  body.connect(noteGain);
+  body.start(startTime);
+  body.stop(startTime + duration + 0.04);
+
+  const shine = context.createOscillator();
+  shine.type = 'sine';
+  shine.frequency.setValueAtTime(frequency * 2.01, startTime);
+  shine.connect(noteGain);
+  shine.start(startTime + 0.005);
+  shine.stop(startTime + duration * 0.72);
+
+  setTimeout(() => noteGain.disconnect(), (duration + 0.25) * 1000);
 }
 
 async function renderDashboard() {
@@ -272,6 +360,7 @@ async function renderDashboard() {
   const openState = settings.options?.openState;
   const business = settings.business || state.business || {};
   applyBusinessStatus(openState);
+  syncNewOrderAlert(new Set(ordersData.orders.filter((order) => order.status === 'Nuevo').map((order) => order.orderNumber)));
   $('#dashboardSection').innerHTML = `
     <section class="ops-hero">
       <div>
@@ -604,6 +693,9 @@ async function updateStatus(orderId, status) {
       body: JSON.stringify({ status })
     });
     showToast(`Pedido ${result.order.orderNumber}: ${status}`);
+    if (result.order.status === 'Nuevo') state.knownNewOrders.add(result.order.orderNumber);
+    else state.knownNewOrders.delete(result.order.orderNumber);
+    syncNewOrderAlert(state.knownNewOrders);
     state.selectedOrderId = result.order.id;
     await renderCurrentSection();
   } catch (error) {

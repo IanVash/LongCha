@@ -306,10 +306,6 @@ function openProductDialog(product) {
           </div>
         </section>
       ` : ''}
-        <label class="dialog-section customizer-notes">
-          <strong>Notas especiales</strong>
-          <textarea class="textarea" name="notes" placeholder="Menos azucar, sin hielo, separar topping..."></textarea>
-        </label>
       </div>
       <div class="product-dialog-action">
         <div class="customizer-qty" aria-label="Cantidad">
@@ -377,7 +373,7 @@ function openProductDialog(product) {
       extras: extraIds,
       extrasData: selectedExtras,
       optionSelections,
-      notes: String(form.get('notes') || '').trim()
+      notes: ''
     });
     saveCart(cart);
     dialog.close();
