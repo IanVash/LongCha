@@ -99,9 +99,9 @@ La base SQLite se crea automaticamente en `data/restaurant_mvp.sqlite`.
 
 Para enviar cambios de estado por WhatsApp automaticamente, activa `WHATSAPP_AUTO_STATUS_UPDATES=true` y configura `WHATSAPP_CLOUD_TOKEN` y `WHATSAPP_PHONE_NUMBER_ID`. Por defecto solo envia mensajes en `Aceptado` y `Listo`; puedes cambiarlo en `WHATSAPP_NOTIFY_STATUSES`. Si no hay credenciales, el panel mantiene el boton manual `Enviar WhatsApp` con el mensaje prellenado.
 
-## Agente local de impresion
+## Servidor local de impresion
 
-Para imprimir sin abrir la ventana del navegador cuando el sistema esta en Render/Railway o en otro servidor cloud, ejecuta un agente local en la PC del negocio. Ese agente se conecta hacia el backend, toma trabajos pendientes y los envia a impresoras instaladas en Windows/macOS/Linux o a impresoras de red por IP/puerto.
+Para imprimir sin abrir la ventana del navegador cuando el sistema esta en Render/Railway o en otro servidor cloud, ejecuta un servidor local en la PC del negocio. Ese servidor se conecta hacia el backend, toma trabajos pendientes y los envia a impresoras instaladas en Windows/macOS/Linux o a impresoras de red por IP/puerto. Render no necesita entrar a la red del local; la PC del negocio hace la conexion saliente.
 
 1. En el servidor web configura el mismo token:
 
@@ -115,15 +115,23 @@ PRINT_AGENT_TOKEN=un-token-largo-y-seguro
 POS_SERVER_URL=https://tu-dominio.com
 PRINT_AGENT_TOKEN=un-token-largo-y-seguro
 PRINT_AGENT_ID=longcha-caja-1
+PRINT_SERVER_HOST=127.0.0.1
+PRINT_SERVER_PORT=3050
 ```
 
-3. Inicia el agente:
+3. Inicia el servidor local:
 
 ```bash
-npm run print-agent
+npm run print-server
 ```
 
-En desarrollo local puedes usar `PRINT_AGENT_TOKEN=dev-print-agent-token` y `POS_SERVER_URL=http://localhost:3000`.
+4. Abre el panel local de impresion en la PC del negocio:
+
+```text
+http://127.0.0.1:3050
+```
+
+Desde ese panel puedes ver conexion con Render, trabajos impresos, fallos recientes y endpoints para detectar impresoras locales. Si el servidor local esta activo, el boton `Detectar impresoras` del panel administrativo intentara leer primero `http://127.0.0.1:3050/printers`, para detectar las impresoras reales de la PC del negocio aunque la plataforma este en Render. En desarrollo local puedes usar `PRINT_AGENT_TOKEN=dev-print-agent-token` y `POS_SERVER_URL=http://localhost:3000`.
 
 Desde el panel de configuracion, en `Impresoras`, elige por cada rol:
 
@@ -132,6 +140,8 @@ Desde el panel de configuracion, en `Impresoras`, elige por cada rol:
 - `Red / IP directa`: el agente envia el trabajo directo a la IP y puerto de la impresora, normalmente `9100`.
 
 La impresion directa por red es la recomendada para termicas ESC/POS y Zebra ZPL. Para impresoras instaladas en Windows, el agente usa el spooler del sistema.
+
+Tambien se mantiene `npm run print-agent` como modo simple sin panel local. Para produccion se recomienda `npm run print-server`.
 
 ## Modelo de base de datos
 

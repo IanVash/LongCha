@@ -2591,13 +2591,34 @@ function updateDetectedPrinterSelects() {
     : detectedPrintersState.message || 'No se encontraron impresoras. En Render debes configurar la impresora por IP o escribir el nombre exacto usado por el agente local.';
 }
 
+async function detectLocalPrintServerPrinters() {
+  const localUrl = (localStorage.getItem('longcha-print-server-url') || 'http://127.0.0.1:3050').replace(/\/+$/, '');
+  const response = await fetch(`${localUrl}/printers`, {
+    headers: { Accept: 'application/json' },
+    cache: 'no-store'
+  });
+  if (!response.ok) throw new Error(`Servidor local HTTP ${response.status}`);
+  const data = await response.json();
+  return {
+    ...data,
+    source: data.source || 'longcha-print-server',
+    message: data.message || (data.printers?.length ? 'Impresoras detectadas en la PC del negocio.' : 'El servidor local respondio, pero no encontro impresoras.')
+  };
+}
+
 async function detectConnectedPrinters() {
   const button = $('#detectPrinters');
   const status = $('#printerDetectionStatus');
   if (button) button.disabled = true;
-  if (status) status.textContent = 'Buscando impresoras conectadas...';
+  if (status) status.textContent = 'Buscando impresoras en la PC del negocio...';
   try {
-    const data = await api('/api/admin/printers/detected');
+    let data;
+    try {
+      data = await detectLocalPrintServerPrinters();
+    } catch {
+      if (status) status.textContent = 'No se encontro servidor local; revisando el servidor web...';
+      data = await api('/api/admin/printers/detected');
+    }
     detectedPrintersState.loaded = true;
     detectedPrintersState.printers = data.printers || [];
     detectedPrintersState.message = data.message || '';

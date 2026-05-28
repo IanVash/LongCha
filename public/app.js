@@ -5,6 +5,7 @@ const LAST_WHATSAPP_KEY = 'qr-food-pos-last-whatsapp-url';
 const CUSTOMER_ORDERS_KEY = 'qr-food-pos-customer-orders';
 const TABLE_KEY = 'qr-food-pos-table';
 const DEFAULT_KIOSK_IDLE_SECONDS = 75;
+const DEFAULT_KIOSK_CART_TIMEOUT_SECONDS = 300;
 const DEFAULT_PRINTER_CONFIG = {
   printers: {
     caja: {
@@ -929,6 +930,17 @@ function kioskIdleMilliseconds() {
   return Math.max(10, Math.min(600, seconds)) * 1000;
 }
 
+function kioskCartTimeoutMilliseconds() {
+  const rawSeconds = Number(new URLSearchParams(location.search).get('cartTimeout'));
+  const seconds = Number.isFinite(rawSeconds) && rawSeconds > 0 ? rawSeconds : DEFAULT_KIOSK_CART_TIMEOUT_SECONDS;
+  return Math.max(30, Math.min(1800, seconds)) * 1000;
+}
+
+function setKioskScreensaverVisible(visible) {
+  const screensaver = $('#kioskScreensaver');
+  if (screensaver) screensaver.hidden = !visible;
+}
+
 function isKioskBusy() {
   return getCart().length > 0 || Boolean(document.querySelector('dialog[open]'));
 }
@@ -940,7 +952,7 @@ function setupKioskScreensaver() {
   let idleTimer = null;
 
   const hideScreensaver = () => {
-    screensaver.hidden = true;
+    setKioskScreensaverVisible(false);
     resetIdleTimer();
   };
   const showScreensaver = () => {
@@ -948,7 +960,7 @@ function setupKioskScreensaver() {
       resetIdleTimer();
       return;
     }
-    screensaver.hidden = false;
+    setKioskScreensaverVisible(true);
   };
   function resetIdleTimer() {
     if (idleTimer) clearTimeout(idleTimer);
@@ -973,6 +985,53 @@ function setupKioskScreensaver() {
     hideScreensaver();
   });
   resetIdleTimer();
+}
+
+function closeKioskDialogs() {
+  $$('dialog[open]').forEach((dialog) => {
+    try {
+      dialog.close();
+    } catch {
+      /* dialog already closing */
+    }
+  });
+}
+
+function resetKioskOrderSession(state, { showScreensaver = false, message = '' } = {}) {
+  localStorage.removeItem(cartStorageKey());
+  state.serviceMode = '';
+  state.deliveryMethodId = null;
+  state.customerName = '';
+  state.tableLabel = getTableLabel() || 'Kiosko';
+  closeKioskDialogs();
+  renderKioskOrder(state);
+  showKioskStart(state, true);
+  if (message) showToast(message);
+  if (showScreensaver) setKioskScreensaverVisible(true);
+}
+
+function setupKioskCartAbandonment(state) {
+  const timeoutMs = kioskCartTimeoutMilliseconds();
+  let cartTimer = null;
+  const resetTimer = () => {
+    if (cartTimer) clearTimeout(cartTimer);
+    cartTimer = setTimeout(() => {
+      if (!getCart().length) {
+        resetTimer();
+        return;
+      }
+      resetKioskOrderSession(state, {
+        showScreensaver: true,
+        message: 'Pedido cancelado por inactividad.'
+      });
+      resetTimer();
+    }, timeoutMs);
+  };
+
+  ['pointerdown', 'touchstart', 'keydown', 'input', 'change', 'scroll'].forEach((eventName) => {
+    document.addEventListener(eventName, resetTimer, { passive: true });
+  });
+  resetTimer();
 }
 
 function kioskCategoryChips(state) {
@@ -1581,7 +1640,7 @@ function openKioskSuccess(order, ticket = {}) {
       <img src="/assets/brand/longcha-mark.png" alt="Long Cha">
       <span class="eyebrow">Pedido enviado</span>
       <h2>${escapeHtml(order.orderNumber)}</h2>
-      <p>Tu orden ya fue enviada a cocina. Conserva este numero y pasa a caja si falta completar el pago.</p>
+      <p>Tu orden ya fue enviada a cocina. Conserva este numero y puedes pasar a caja a cancelar tu pedido.</p>
       <div class="kiosk-success-actions">
         ${config.printers.kiosk.enabled ? '<button class="btn btn--brand" type="button" data-kiosk-print-order-number>Imprimir numero de orden</button>' : ''}
         <button class="btn btn--ghost" type="button" data-kiosk-new-order>Hacer otro pedido</button>
@@ -1707,6 +1766,7 @@ async function initKiosk() {
   updateKioskClock();
   setInterval(updateKioskClock, 30000);
   setupKioskScreensaver();
+  setupKioskCartAbandonment(state);
 
   $('#kioskStart').addEventListener('click', (event) => {
     const button = event.target.closest('[data-kiosk-service-mode]');
