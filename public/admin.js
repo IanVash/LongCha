@@ -2023,6 +2023,69 @@ function simpleTable(rows) {
   </tbody></table></div>`;
 }
 
+function cashRegisterPanel(data, today) {
+  const context = data.cashContext || {};
+  const cashRegister = context.cashRegister || { open: false, businessDate: today, session: null };
+  const session = cashRegister.session || {};
+  const isOpen = Boolean(cashRegister.open);
+  const statusLabel = isOpen ? 'Caja abierta' : 'Caja cerrada';
+  const statusHelp = isOpen
+    ? 'La caja esta habilitada; los horarios configurados tambien se respetan.'
+    : 'Abre caja para habilitar la recepcion de pedidos.';
+  const openedBy = session.openedByUserName ? ` por ${escapeHtml(session.openedByUserName)}` : '';
+  const openedAt = session.openedAt ? `<span>Abierta${openedBy}: ${escapeHtml(session.openedAt)}</span>` : '';
+  const form = isOpen ? `
+    <form class="form-grid cash-register-form" id="cashClosingForm">
+      <label>Fecha de caja<input class="field" type="date" value="${escapeHtml(cashRegister.businessDate || today)}" disabled></label>
+      <label>Fondo inicial<input class="field" type="text" value="${money(session.openingCashCents || 0)}" disabled></label>
+      <label>Efectivo contado<input class="field" name="countedCash" type="number" min="0" step="0.01" required></label>
+      <label>Retiros de caja<input class="field" name="withdrawals" type="number" min="0" step="0.01" value="0"></label>
+      <label class="wide">Notas<textarea class="textarea" name="notes" placeholder="Diferencias, retiros, observaciones del turno"></textarea></label>
+      <div class="wide actions-row">
+        <button class="btn btn--brand" type="submit">Cerrar caja y pausar pedidos</button>
+      </div>
+    </form>
+  ` : `
+    <form class="form-grid cash-register-form" id="cashOpeningForm">
+      <label>Fecha de caja<input class="field" name="businessDate" type="date" value="${escapeHtml(cashRegister.businessDate || today)}" required></label>
+      <label>Fondo inicial<input class="field" name="openingCash" type="number" min="0" step="0.01" value="0" required></label>
+      <label class="wide">Notas<textarea class="textarea" name="notes" placeholder="Responsable, caja inicial, observaciones de apertura"></textarea></label>
+      <div class="wide actions-row">
+        <button class="btn btn--brand" type="submit">Abrir caja y recibir pedidos</button>
+      </div>
+    </form>
+  `;
+  return `
+    <section class="panel cash-close-panel">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">Caja diaria</span>
+          <h2>Apertura y cierre</h2>
+        </div>
+        <span class="badge">${escapeHtml(cashRegister.businessDate || today)}</span>
+      </div>
+      <div class="cash-register-state ${isOpen ? 'is-open' : 'is-closed'}">
+        <div>
+          <strong>${statusLabel}</strong>
+          <p>${statusHelp}</p>
+          ${openedAt}
+        </div>
+        <b>${isOpen ? 'Caja habilitada' : 'Pedidos pausados'}</b>
+      </div>
+      <div class="cash-summary-grid">
+        ${cashSummaryItem('Efectivo ventas', context.cashSalesCents)}
+        ${cashSummaryItem('Tarjeta', context.cardSalesCents)}
+        ${cashSummaryItem('Transferencia', context.transferSalesCents)}
+        ${cashSummaryItem('Delivery', context.deliverySalesCents)}
+        ${cashSummaryItem('Ingresos efectivo', context.manualCashIncomeCents)}
+        ${cashSummaryItem('Gastos efectivo', context.cashExpenseCents)}
+      </div>
+      ${form}
+      ${cashClosingsTable(data.cashClosings || [])}
+    </section>
+  `;
+}
+
 async function renderAccountingAdmin() {
   const data = await api('/api/admin/accounting');
   const summary = data.summary;
@@ -2036,34 +2099,7 @@ async function renderAccountingAdmin() {
     </div>
 
     <div class="accounting-pro-layout">
-      <section class="panel cash-close-panel">
-        <div class="panel-head">
-          <div>
-            <span class="eyebrow">Caja diaria</span>
-            <h2>Cierre de turno</h2>
-          </div>
-          <span class="badge">${escapeHtml(today)}</span>
-        </div>
-        <div class="cash-summary-grid">
-          ${cashSummaryItem('Efectivo ventas', data.cashContext.cashSalesCents)}
-          ${cashSummaryItem('Tarjeta', data.cashContext.cardSalesCents)}
-          ${cashSummaryItem('Transferencia', data.cashContext.transferSalesCents)}
-          ${cashSummaryItem('Delivery', data.cashContext.deliverySalesCents)}
-          ${cashSummaryItem('Ingresos efectivo', data.cashContext.manualCashIncomeCents)}
-          ${cashSummaryItem('Gastos efectivo', data.cashContext.cashExpenseCents)}
-        </div>
-        <form class="form-grid" id="cashClosingForm">
-          <label>Fecha<input class="field" name="businessDate" type="date" value="${escapeHtml(today)}"></label>
-          <label>Fondo inicial<input class="field" name="openingCash" type="number" min="0" step="0.01" value="0"></label>
-          <label>Efectivo contado<input class="field" name="countedCash" type="number" min="0" step="0.01" required></label>
-          <label>Retiros de caja<input class="field" name="withdrawals" type="number" min="0" step="0.01" value="0"></label>
-          <label class="wide">Notas<textarea class="textarea" name="notes" placeholder="Diferencias, retiros, observaciones del turno"></textarea></label>
-          <div class="wide actions-row">
-            <button class="btn btn--brand" type="submit">Cerrar caja</button>
-          </div>
-        </form>
-        ${cashClosingsTable(data.cashClosings)}
-      </section>
+      ${cashRegisterPanel(data, today)}
 
       <section class="panel">
         <div class="panel-head">
@@ -2190,14 +2226,28 @@ async function renderAccountingAdmin() {
     showToast('Movimiento guardado');
     renderAccountingAdmin();
   });
-  $('#cashClosingForm').addEventListener('submit', async (event) => {
+  const cashOpeningForm = $('#cashOpeningForm');
+  if (cashOpeningForm) cashOpeningForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    await api('/api/admin/accounting/cash-openings', {
+      method: 'POST',
+      body: JSON.stringify({
+        businessDate: form.elements.businessDate.value,
+        openingCash: Number(form.elements.openingCash.value || 0),
+        notes: form.elements.notes.value
+      })
+    });
+    showToast('Caja abierta. Los pedidos quedan sujetos al horario configurado.');
+    renderAccountingAdmin();
+  });
+  const cashClosingForm = $('#cashClosingForm');
+  if (cashClosingForm) cashClosingForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const result = await api('/api/admin/accounting/cash-closings', {
       method: 'POST',
       body: JSON.stringify({
-        businessDate: form.elements.businessDate.value,
-        openingCash: Number(form.elements.openingCash.value || 0),
         countedCash: Number(form.elements.countedCash.value || 0),
         withdrawals: Number(form.elements.withdrawals.value || 0),
         notes: form.elements.notes.value

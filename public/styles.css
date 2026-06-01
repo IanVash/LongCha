@@ -2692,6 +2692,62 @@ button {
   grid-row: span 2;
 }
 
+.cash-register-state {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  background: #f9fbfa;
+}
+
+.cash-register-state strong {
+  display: block;
+  font-size: 1.02rem;
+  margin-bottom: 4px;
+}
+
+.cash-register-state p,
+.cash-register-state span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.cash-register-state b {
+  border-radius: 999px;
+  padding: 8px 12px;
+  white-space: nowrap;
+  font-size: 0.84rem;
+}
+
+.cash-register-state.is-open {
+  border-color: rgba(34, 139, 86, 0.24);
+  background: #f3fbf7;
+}
+
+.cash-register-state.is-open b {
+  background: rgba(34, 139, 86, 0.12);
+  color: #16633c;
+}
+
+.cash-register-state.is-closed {
+  border-color: rgba(194, 104, 38, 0.24);
+  background: #fff8f0;
+}
+
+.cash-register-state.is-closed b {
+  background: rgba(194, 104, 38, 0.12);
+  color: #8a4315;
+}
+
+.cash-register-form {
+  margin-top: 4px;
+}
+
 .cash-summary-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -4346,6 +4402,14 @@ body[data-page="kiosk"] {
 
   .cash-close-panel {
     grid-row: auto;
+  }
+
+  .cash-register-state {
+    display: grid;
+  }
+
+  .cash-register-state b {
+    justify-self: start;
   }
 
   .cash-summary-grid,

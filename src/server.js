@@ -53,6 +53,7 @@ import {
   login,
   notificationLog,
   saveCashClosing,
+  saveCashOpening,
   saveCategory,
   saveAccountingEntry,
   saveDeliveryZone,
@@ -1405,6 +1406,15 @@ async function handleAdminApi(req, res, url) {
       amountCents: entry.amountCents
     }, user.id);
     return json(res, 201, { entry });
+  }
+  if (req.method === 'POST' && pathname === '/api/admin/accounting/cash-openings') {
+    requirePermission(user, '*');
+    const cashRegister = saveCashOpening(await readJson(req), user.id);
+    audit(req, 'accounting.cash_opened', 'cash_register_session', cashRegister.session?.id || '', {
+      businessDate: cashRegister.businessDate,
+      openingCashCents: cashRegister.session?.openingCashCents || 0
+    }, user.id);
+    return json(res, 201, { cashRegister });
   }
   if (req.method === 'POST' && pathname === '/api/admin/accounting/cash-closings') {
     requirePermission(user, '*');

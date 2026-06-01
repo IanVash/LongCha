@@ -540,6 +540,25 @@ export function initDatabase() {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS cash_register_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      business_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+      opening_cash_cents INTEGER NOT NULL DEFAULT 0,
+      opened_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      opened_at TEXT NOT NULL,
+      closing_id INTEGER REFERENCES cash_closings(id) ON DELETE SET NULL,
+      closing_cash_cents INTEGER NOT NULL DEFAULT 0,
+      closed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      closed_at TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cash_register_sessions_status ON cash_register_sessions(status, business_date);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_register_sessions_one_open ON cash_register_sessions(status) WHERE status = 'open';
+
     CREATE TABLE IF NOT EXISTS supplier_purchases (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       supplier_name TEXT NOT NULL,
@@ -727,6 +746,26 @@ function runMigrations() {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS cash_register_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      business_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+      opening_cash_cents INTEGER NOT NULL DEFAULT 0,
+      opened_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      opened_at TEXT NOT NULL,
+      closing_id INTEGER REFERENCES cash_closings(id) ON DELETE SET NULL,
+      closing_cash_cents INTEGER NOT NULL DEFAULT 0,
+      closed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      closed_at TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cash_register_sessions_status ON cash_register_sessions(status, business_date);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_register_sessions_one_open ON cash_register_sessions(status) WHERE status = 'open';
+
     CREATE TABLE IF NOT EXISTS supplier_purchases (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       supplier_name TEXT NOT NULL,
@@ -1303,9 +1342,18 @@ function businessNowParts() {
 export function isBusinessOpen() {
   const business = getBusiness();
   if (business.temporaryClosedUntil && businessDateTimeMs(business.temporaryClosedUntil) > Date.now()) {
-    return { open: false, message: business.closedMessage };
+    return { open: false, message: business.closedMessage, reason: 'temporary_closed' };
   }
-  if (business.allowOrdersOutsideHours) return { open: true, message: '' };
+  const cashRegister = getCashRegisterState();
+  if (!cashRegister.open) {
+    return {
+      open: false,
+      message: 'Caja cerrada. Abre caja para recibir pedidos.',
+      reason: 'cash_closed',
+      cashRegisterOpen: false
+    };
+  }
+  if (business.allowOrdersOutsideHours) return { open: true, message: '', cashRegisterOpen: true };
 
   const nowParts = businessNowParts();
   const minutes = nowParts.minutes;
@@ -1326,12 +1374,14 @@ export function isBusinessOpen() {
     const yesterday = activeHours.find((item) => Number(item.day) === ((nowParts.day + 6) % 7));
     return {
       open: dayIsOpen(today, minutes) || dayIsOpen(yesterday, minutes, true),
-      message: business.closedMessage
+      message: business.closedMessage,
+      reason: 'schedule',
+      cashRegisterOpen: true
     };
   }
 
-  if (business.isOpenManual) return { open: true, message: '' };
-  return { open: false, message: business.closedMessage };
+  if (business.isOpenManual) return { open: true, message: '', cashRegisterOpen: true };
+  return { open: false, message: business.closedMessage, reason: 'manual_closed', cashRegisterOpen: true };
 }
 
 function mapCategory(row) {
@@ -2911,6 +2961,51 @@ function mapCashClosing(row) {
   };
 }
 
+function mapCashRegisterSession(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    businessDate: row.business_date,
+    status: row.status,
+    open: row.status === 'open',
+    openingCashCents: Number(row.opening_cash_cents || 0),
+    openingCash: money(row.opening_cash_cents),
+    openedByUserId: row.opened_by_user_id,
+    openedByUserName: row.opened_by_user_name || '',
+    openedAt: row.opened_at,
+    closingId: row.closing_id,
+    closingCashCents: Number(row.closing_cash_cents || 0),
+    closingCash: money(row.closing_cash_cents),
+    closedByUserId: row.closed_by_user_id,
+    closedByUserName: row.closed_by_user_name || '',
+    closedAt: row.closed_at || '',
+    notes: row.notes || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function getOpenCashRegisterSession() {
+  return mapCashRegisterSession(db.prepare(`
+    SELECT crs.*, opened.name AS opened_by_user_name, closed.name AS closed_by_user_name
+    FROM cash_register_sessions crs
+    LEFT JOIN users opened ON opened.id = crs.opened_by_user_id
+    LEFT JOIN users closed ON closed.id = crs.closed_by_user_id
+    WHERE crs.status = 'open'
+    ORDER BY crs.opened_at DESC, crs.id DESC
+    LIMIT 1
+  `).get());
+}
+
+export function getCashRegisterState() {
+  const session = getOpenCashRegisterSession();
+  return {
+    open: Boolean(session),
+    businessDate: session?.businessDate || localBusinessDate(),
+    session
+  };
+}
+
 export function listCashClosings({ limit = 20 } = {}) {
   return db.prepare(`
     SELECT cc.*, u.name AS closed_by_user_name
@@ -2921,11 +3016,14 @@ export function listCashClosings({ limit = 20 } = {}) {
   `).all(Number(limit)).map(mapCashClosing);
 }
 
-export function getCashCloseContext(date = localBusinessDate()) {
-  const payment = paymentBucketsForDate(date);
-  const movements = cashMovementsForDate(date);
+export function getCashCloseContext(date = null) {
+  const cashRegister = getCashRegisterState();
+  const businessDate = clean(date || cashRegister.businessDate || localBusinessDate(), 20);
+  const payment = paymentBucketsForDate(businessDate);
+  const movements = cashMovementsForDate(businessDate);
   return {
-    businessDate: date,
+    businessDate,
+    cashRegister,
     paymentSummary: payment.rows,
     cashSalesCents: payment.cashSalesCents,
     cardSalesCents: payment.cardSalesCents,
@@ -2934,6 +3032,39 @@ export function getCashCloseContext(date = localBusinessDate()) {
     manualCashIncomeCents: movements.manualCashIncomeCents,
     cashExpenseCents: movements.cashExpenseCents
   };
+}
+
+export function saveCashOpening(input, userId = null) {
+  const existing = getOpenCashRegisterSession();
+  if (existing) {
+    throw new ValidationError('Ya hay una caja abierta. Cierra la caja actual antes de abrir otra.', 409);
+  }
+  const businessDate = clean(input.businessDate || localBusinessDate(), 20);
+  const openingCashCents = cents(input.openingCash);
+  if (openingCashCents < 0) throw new ValidationError('El fondo inicial no puede ser negativo.');
+  const createdAt = nowIso();
+  try {
+    db.prepare(`
+      INSERT INTO cash_register_sessions (
+        business_date, status, opening_cash_cents, opened_by_user_id, opened_at,
+        notes, created_at, updated_at
+      ) VALUES (?, 'open', ?, ?, ?, ?, ?, ?)
+    `).run(
+      businessDate,
+      openingCashCents,
+      userId || null,
+      createdAt,
+      clean(input.notes, 600),
+      createdAt,
+      createdAt
+    );
+  } catch (error) {
+    if (String(error.message || '').includes('idx_cash_register_sessions_one_open')) {
+      throw new ValidationError('Ya hay una caja abierta. Cierra la caja actual antes de abrir otra.', 409);
+    }
+    throw error;
+  }
+  return getCashRegisterState();
 }
 
 function archiveOrdersBeforeBusinessDate(date) {
@@ -2948,9 +3079,11 @@ function archiveOrdersBeforeBusinessDate(date) {
 }
 
 export function saveCashClosing(input, userId = null) {
-  const businessDate = clean(input.businessDate || localBusinessDate(), 20);
+  const openSession = getOpenCashRegisterSession();
+  if (!openSession) throw new ValidationError('No hay caja abierta para cerrar.', 409);
+  const businessDate = openSession.businessDate;
   const context = getCashCloseContext(businessDate);
-  const openingCashCents = cents(input.openingCash);
+  const openingCashCents = openSession.openingCashCents;
   const countedCashCents = cents(input.countedCash);
   const withdrawalsCents = cents(input.withdrawals);
   const expectedCashCents = openingCashCents + context.cashSalesCents + context.manualCashIncomeCents - context.cashExpenseCents - withdrawalsCents;
@@ -2982,6 +3115,20 @@ export function saveCashClosing(input, userId = null) {
       userId || null,
       createdAt,
       createdAt
+    );
+    db.prepare(`
+      UPDATE cash_register_sessions
+      SET status = 'closed', closing_id = ?, closing_cash_cents = ?, closed_by_user_id = ?,
+        closed_at = ?, notes = ?, updated_at = ?
+      WHERE id = ? AND status = 'open'
+    `).run(
+      Number(result.lastInsertRowid),
+      countedCashCents,
+      userId || null,
+      createdAt,
+      clean(input.notes, 600),
+      createdAt,
+      openSession.id
     );
     const archivedOrders = archiveOrdersBeforeBusinessDate(businessDate);
     db.exec('COMMIT');
