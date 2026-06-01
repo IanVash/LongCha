@@ -2193,7 +2193,7 @@ async function renderAccountingAdmin() {
   $('#cashClosingForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
-    await api('/api/admin/accounting/cash-closings', {
+    const result = await api('/api/admin/accounting/cash-closings', {
       method: 'POST',
       body: JSON.stringify({
         businessDate: form.elements.businessDate.value,
@@ -2203,7 +2203,9 @@ async function renderAccountingAdmin() {
         notes: form.elements.notes.value
       })
     });
-    showToast('Caja cerrada');
+    showToast(result.closing?.archivedOrders
+      ? `Caja cerrada. ${result.closing.archivedOrders} pedido(s) anterior(es) archivado(s).`
+      : 'Caja cerrada');
     renderAccountingAdmin();
   });
   $('#supplierPurchaseForm').addEventListener('submit', async (event) => {
@@ -2734,7 +2736,7 @@ async function renderSettings() {
 
         <section class="settings-block">
           <header><h2>Horarios</h2></header>
-          <p class="muted" style="margin-top:0">Cuando un dia esta activo, el sistema solo recibe pedidos entre apertura y cierre. Fuera de ese rango el menu y el kiosk quedan bloqueados.</p>
+          <p class="muted" style="margin-top:0">Cuando un dia esta activo, el sistema solo recibe pedidos entre apertura y cierre usando la hora de El Salvador.</p>
           <div class="schedule-grid" id="hoursEditor">${renderHoursEditor(business.hours)}</div>
         </section>
 

@@ -41,6 +41,22 @@ const cents = (value) => Math.round(Number(value || 0) * 100);
 const money = (value) => Number((Number(value || 0) / 100).toFixed(2));
 const clean = (value, max = 255) => String(value ?? '').trim().slice(0, max);
 const boolInt = (value) => (value ? 1 : 0);
+const BUSINESS_TIMEZONE = 'America/El_Salvador';
+const BUSINESS_SQL_TIME = "'-6 hours'";
+const businessDateSql = (column = 'created_at') => `date(${column}, ${BUSINESS_SQL_TIME})`;
+const businessMonthSql = (column = 'created_at') => `strftime('%Y-%m', ${column}, ${BUSINESS_SQL_TIME})`;
+const businessHourSql = (column = 'created_at') => `strftime('%H', ${column}, ${BUSINESS_SQL_TIME})`;
+
+function businessDateTimeMs(value) {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(text)) return new Date(text).getTime();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!match) return new Date(text).getTime();
+  const [, year, month, day, hour, minute] = match.map(Number);
+  return Date.UTC(year, month - 1, day, hour + 6, minute);
+}
+
 const DEFAULT_PRINTER_CONFIG = {
   printers: {
     caja: {
@@ -426,6 +442,7 @@ export function initDatabase() {
       delivery_fee_cents INTEGER NOT NULL DEFAULT 0,
       total_cents INTEGER NOT NULL,
       notes TEXT DEFAULT '',
+      archived_at TEXT DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -636,6 +653,7 @@ function runMigrations() {
   addColumn('orders', 'payment_reference', "payment_reference TEXT DEFAULT ''");
   addColumn('orders', 'discount_cents', 'discount_cents INTEGER NOT NULL DEFAULT 0');
   addColumn('orders', 'coupon_code', "coupon_code TEXT DEFAULT ''");
+  addColumn('orders', 'archived_at', "archived_at TEXT DEFAULT ''");
   addColumn('promotions', 'code', "code TEXT DEFAULT ''");
   addColumn('promotions', 'min_order_cents', 'min_order_cents INTEGER NOT NULL DEFAULT 0');
   addColumn('promotions', 'max_discount_cents', 'max_discount_cents INTEGER NOT NULL DEFAULT 0');
@@ -1264,15 +1282,33 @@ export function updateBusiness(input) {
   return getBusiness();
 }
 
+function businessNowParts() {
+  const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: BUSINESS_TIMEZONE,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(new Date()).reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+  return {
+    day: weekdayMap[parts.weekday] ?? new Date().getDay(),
+    minutes: Number(parts.hour || 0) * 60 + Number(parts.minute || 0)
+  };
+}
+
 export function isBusinessOpen() {
   const business = getBusiness();
-  if (business.temporaryClosedUntil && new Date(business.temporaryClosedUntil).getTime() > Date.now()) {
+  if (business.temporaryClosedUntil && businessDateTimeMs(business.temporaryClosedUntil) > Date.now()) {
     return { open: false, message: business.closedMessage };
   }
   if (business.allowOrdersOutsideHours) return { open: true, message: '' };
 
-  const now = new Date();
-  const minutes = now.getHours() * 60 + now.getMinutes();
+  const nowParts = businessNowParts();
+  const minutes = nowParts.minutes;
   const activeHours = (business.hours || []).filter((item) => item?.active);
   if (activeHours.length) {
     const dayIsOpen = (schedule, currentMinutes, overnightFromPreviousDay = false) => {
@@ -1286,8 +1322,8 @@ export function isBusinessOpen() {
       }
       return !overnightFromPreviousDay && currentMinutes >= openMinutes && currentMinutes <= closeMinutes;
     };
-    const today = activeHours.find((item) => Number(item.day) === now.getDay());
-    const yesterday = activeHours.find((item) => Number(item.day) === ((now.getDay() + 6) % 7));
+    const today = activeHours.find((item) => Number(item.day) === nowParts.day);
+    const yesterday = activeHours.find((item) => Number(item.day) === ((nowParts.day + 6) % 7));
     return {
       open: dayIsOpen(today, minutes) || dayIsOpen(yesterday, minutes, true),
       message: business.closedMessage
@@ -1676,8 +1712,8 @@ function deductInventory(items) {
 }
 
 function createOrderNumber() {
-  const d = new Date();
-  const prefix = `BC${String(d.getFullYear()).slice(-2)}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  const date = localBusinessDate().replaceAll('-', '');
+  const prefix = `BC${date.slice(2)}`;
   const row = db.prepare('SELECT COUNT(*) AS total FROM orders WHERE order_number LIKE ?').get(`${prefix}-%`);
   return `${prefix}-${String(row.total + 1).padStart(4, '0')}`;
 }
@@ -1866,6 +1902,7 @@ function hydrateOrder(row) {
     totalCents: row.total_cents,
     total: money(row.total_cents),
     notes: row.notes,
+    archivedAt: row.archived_at || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     items,
@@ -1897,9 +1934,12 @@ export function getOrderByNumber(orderNumber) {
   return hydrateOrder(db.prepare(orderBaseQuery('WHERE o.order_number = ?')).get(clean(orderNumber, 60)));
 }
 
-export function listOrders({ status = 'all', search = '', limit = 80, kds = false } = {}) {
+export function listOrders({ status = 'all', search = '', limit = 80, kds = false, includeArchived = false } = {}) {
   const clauses = [];
   const params = [];
+  if (!includeArchived) {
+    clauses.push("IFNULL(o.archived_at, '') = ''");
+  }
   if (status && status !== 'all') {
     clauses.push('o.status = ?');
     params.push(status);
@@ -2773,9 +2813,8 @@ export function listAccountingEntries({ limit = 140 } = {}) {
 
 function localBusinessDate() {
   try {
-    const timezone = db.prepare('SELECT timezone FROM business WHERE id = 1').get()?.timezone || 'America/El_Salvador';
     return new Intl.DateTimeFormat('en-CA', {
-      timeZone: timezone,
+      timeZone: BUSINESS_TIMEZONE,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'
@@ -2790,7 +2829,7 @@ function paymentBucketsForDate(date = localBusinessDate()) {
     SELECT lower(pm.slug) AS slug, pm.name, COUNT(*) AS orders, COALESCE(SUM(o.total_cents), 0) AS sales_cents
     FROM orders o
     JOIN payment_methods pm ON pm.id = o.payment_method_id
-    WHERE o.status != 'Cancelado' AND date(o.created_at, 'localtime') = ?
+    WHERE o.status != 'Cancelado' AND ${businessDateSql('o.created_at')} = ?
     GROUP BY pm.id
     ORDER BY sales_cents DESC
   `).all(date);
@@ -2798,7 +2837,7 @@ function paymentBucketsForDate(date = localBusinessDate()) {
     SELECT COUNT(*) AS orders, COALESCE(SUM(o.total_cents), 0) AS sales_cents
     FROM orders o
     JOIN delivery_methods dm ON dm.id = o.delivery_method_id
-    WHERE o.status != 'Cancelado' AND dm.slug = 'delivery' AND date(o.created_at, 'localtime') = ?
+    WHERE o.status != 'Cancelado' AND dm.slug = 'delivery' AND ${businessDateSql('o.created_at')} = ?
   `).get(date);
   const classified = rows.reduce((acc, row) => {
     const slug = row.slug || '';
@@ -2897,6 +2936,17 @@ export function getCashCloseContext(date = localBusinessDate()) {
   };
 }
 
+function archiveOrdersBeforeBusinessDate(date) {
+  const archivedAt = nowIso();
+  const result = db.prepare(`
+    UPDATE orders
+    SET archived_at = ?, updated_at = ?
+    WHERE IFNULL(archived_at, '') = ''
+      AND ${businessDateSql('created_at')} < ?
+  `).run(archivedAt, archivedAt, date);
+  return Number(result.changes || 0);
+}
+
 export function saveCashClosing(input, userId = null) {
   const businessDate = clean(input.businessDate || localBusinessDate(), 20);
   const context = getCashCloseContext(businessDate);
@@ -2906,32 +2956,41 @@ export function saveCashClosing(input, userId = null) {
   const expectedCashCents = openingCashCents + context.cashSalesCents + context.manualCashIncomeCents - context.cashExpenseCents - withdrawalsCents;
   const differenceCents = countedCashCents - expectedCashCents;
   const createdAt = nowIso();
-  const result = db.prepare(`
-    INSERT INTO cash_closings (
-      business_date, opening_cash_cents, counted_cash_cents, cash_sales_cents,
-      card_sales_cents, transfer_sales_cents, delivery_sales_cents, manual_cash_income_cents,
-      cash_expense_cents, withdrawals_cents, expected_cash_cents, difference_cents,
-      notes, closed_by_user_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    businessDate,
-    openingCashCents,
-    countedCashCents,
-    context.cashSalesCents,
-    context.cardSalesCents,
-    context.transferSalesCents,
-    context.deliverySalesCents,
-    context.manualCashIncomeCents,
-    context.cashExpenseCents,
-    withdrawalsCents,
-    expectedCashCents,
-    differenceCents,
-    clean(input.notes, 600),
-    userId || null,
-    createdAt,
-    createdAt
-  );
-  return listCashClosings({ limit: 60 }).find((closing) => closing.id === Number(result.lastInsertRowid));
+  db.exec('BEGIN');
+  try {
+    const result = db.prepare(`
+      INSERT INTO cash_closings (
+        business_date, opening_cash_cents, counted_cash_cents, cash_sales_cents,
+        card_sales_cents, transfer_sales_cents, delivery_sales_cents, manual_cash_income_cents,
+        cash_expense_cents, withdrawals_cents, expected_cash_cents, difference_cents,
+        notes, closed_by_user_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      businessDate,
+      openingCashCents,
+      countedCashCents,
+      context.cashSalesCents,
+      context.cardSalesCents,
+      context.transferSalesCents,
+      context.deliverySalesCents,
+      context.manualCashIncomeCents,
+      context.cashExpenseCents,
+      withdrawalsCents,
+      expectedCashCents,
+      differenceCents,
+      clean(input.notes, 600),
+      userId || null,
+      createdAt,
+      createdAt
+    );
+    const archivedOrders = archiveOrdersBeforeBusinessDate(businessDate);
+    db.exec('COMMIT');
+    const closing = listCashClosings({ limit: 60 }).find((item) => item.id === Number(result.lastInsertRowid));
+    return { ...closing, archivedOrders };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 function mapSupplierPurchase(row) {
@@ -3144,6 +3203,7 @@ export function saveWasteLog(input, userId = null) {
 }
 
 function estimatedCogsForMonth() {
+  const currentMonth = localBusinessDate().slice(0, 7);
   const row = db.prepare(`
     SELECT COALESCE(SUM(oi.quantity * pii.quantity * ii.cost_cents), 0) AS total
     FROM orders o
@@ -3151,21 +3211,22 @@ function estimatedCogsForMonth() {
     JOIN product_inventory_items pii ON pii.product_id = oi.product_id
     JOIN inventory_items ii ON ii.id = pii.inventory_item_id
     WHERE o.status != 'Cancelado'
-      AND strftime('%Y-%m', o.created_at) = strftime('%Y-%m', 'now', 'localtime')
-  `).get();
+      AND ${businessMonthSql('o.created_at')} = ?
+  `).get(currentMonth);
   return Math.round(Number(row.total || 0));
 }
 
 function getProductCosting() {
   const recipes = listProductRecipes();
+  const currentMonth = localBusinessDate().slice(0, 7);
   const monthlySales = db.prepare(`
     SELECT oi.product_id, SUM(oi.quantity) AS quantity, SUM(oi.line_total_cents) AS sales_cents
     FROM order_items oi
     JOIN orders o ON o.id = oi.order_id
     WHERE o.status != 'Cancelado'
-      AND strftime('%Y-%m', o.created_at) = strftime('%Y-%m', 'now', 'localtime')
+      AND ${businessMonthSql('o.created_at')} = ?
     GROUP BY oi.product_id
-  `).all();
+  `).all(currentMonth);
   const salesByProduct = new Map(monthlySales.map((row) => [row.product_id, row]));
   return getAdminCatalog().products.map((product) => {
     const lines = recipes.filter((recipe) => recipe.productId === product.id).map((recipe) => ({
@@ -3198,38 +3259,40 @@ function getProductCosting() {
 export function getAccounting() {
   const notCancelled = "status != 'Cancelado'";
   const scalar = (sql, ...params) => db.prepare(sql).get(...params);
+  const todayDate = localBusinessDate();
+  const currentMonth = todayDate.slice(0, 7);
   const todaySales = scalar(`
     SELECT COALESCE(SUM(total_cents), 0) AS total
     FROM orders
-    WHERE ${notCancelled} AND date(created_at) = date('now', 'localtime')
-  `).total;
+    WHERE ${notCancelled} AND ${businessDateSql()} = ?
+  `, todayDate).total;
   const monthSales = scalar(`
     SELECT COALESCE(SUM(total_cents), 0) AS total
     FROM orders
-    WHERE ${notCancelled} AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime')
-  `).total;
+    WHERE ${notCancelled} AND ${businessMonthSql()} = ?
+  `, currentMonth).total;
   const manualMonth = scalar(`
     SELECT
       COALESCE(SUM(CASE WHEN type = 'income' THEN amount_cents ELSE 0 END), 0) AS income,
       COALESCE(SUM(CASE WHEN type = 'expense' THEN amount_cents ELSE 0 END), 0) AS expenses
     FROM accounting_entries
-    WHERE strftime('%Y-%m', entry_date) = strftime('%Y-%m', 'now', 'localtime')
-  `);
+    WHERE strftime('%Y-%m', entry_date) = ?
+  `, currentMonth);
   const todayExpenses = scalar(`
     SELECT COALESCE(SUM(amount_cents), 0) AS total
     FROM accounting_entries
-    WHERE type = 'expense' AND date(entry_date) = date('now', 'localtime')
-  `).total;
+    WHERE type = 'expense' AND date(entry_date) = date(?)
+  `, todayDate).total;
   const monthPurchases = scalar(`
     SELECT COALESCE(SUM(total_cents), 0) AS total
     FROM supplier_purchases
-    WHERE strftime('%Y-%m', purchase_date) = strftime('%Y-%m', 'now', 'localtime')
-  `).total;
+    WHERE strftime('%Y-%m', purchase_date) = ?
+  `, currentMonth).total;
   const monthWaste = scalar(`
     SELECT COALESCE(SUM(cost_cents), 0) AS total
     FROM waste_logs
-    WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime')
-  `).total;
+    WHERE ${businessMonthSql('created_at')} = ?
+  `, currentMonth).total;
   const byCategory = db.prepare(`
     SELECT category AS name, type, COUNT(*) AS entries, COALESCE(SUM(amount_cents), 0) AS amount_cents
     FROM accounting_entries
@@ -3601,21 +3664,23 @@ export function listAuditLogs({ limit = 120, action = '', userId = null } = {}) 
 export function getReports() {
   const notCancelled = "status != 'Cancelado'";
   const scalar = (sql, ...params) => db.prepare(sql).get(...params);
+  const todayDate = localBusinessDate();
+  const currentMonth = todayDate.slice(0, 7);
   const today = scalar(`
     SELECT COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales
     FROM orders
-    WHERE ${notCancelled} AND date(created_at) = date('now', 'localtime')
-  `);
+    WHERE ${notCancelled} AND ${businessDateSql()} = ?
+  `, todayDate);
   const week = scalar(`
     SELECT COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales
     FROM orders
-    WHERE ${notCancelled} AND date(created_at) >= date('now', '-6 day', 'localtime')
-  `);
+    WHERE ${notCancelled} AND ${businessDateSql()} >= date(?, '-6 day')
+  `, todayDate);
   const month = scalar(`
     SELECT COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales
     FROM orders
-    WHERE ${notCancelled} AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime')
-  `);
+    WHERE ${notCancelled} AND ${businessMonthSql()} = ?
+  `, currentMonth);
   const all = scalar(`
     SELECT COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales,
       COALESCE(AVG(total_cents), 0) AS average_ticket
@@ -3668,10 +3733,10 @@ export function getReports() {
   }));
 
   const byDay = db.prepare(`
-    SELECT date(created_at) AS day, COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales_cents
+    SELECT ${businessDateSql()} AS day, COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales_cents
     FROM orders
     WHERE status != 'Cancelado'
-    GROUP BY date(created_at)
+    GROUP BY ${businessDateSql()}
     ORDER BY day DESC
     LIMIT 14
   `).all().reverse().map((row) => ({
@@ -3682,13 +3747,13 @@ export function getReports() {
   }));
 
   const byHour = db.prepare(`
-    SELECT strftime('%H:00', created_at, 'localtime') AS name,
+    SELECT ${businessHourSql()} || ':00' AS name,
       COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales_cents
     FROM orders
-    WHERE status != 'Cancelado' AND date(created_at) = date('now', 'localtime')
-    GROUP BY strftime('%H', created_at, 'localtime')
+    WHERE status != 'Cancelado' AND ${businessDateSql()} = ?
+    GROUP BY ${businessHourSql()}
     ORDER BY name
-  `).all().map((row) => ({
+  `).all(todayDate).map((row) => ({
     name: row.name,
     orders: row.orders,
     salesCents: row.sales_cents,

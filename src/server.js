@@ -1411,7 +1411,8 @@ async function handleAdminApi(req, res, url) {
     const closing = saveCashClosing(await readJson(req), user.id);
     audit(req, 'accounting.cash_closed', 'cash_closing', closing.id, {
       businessDate: closing.businessDate,
-      differenceCents: closing.differenceCents
+      differenceCents: closing.differenceCents,
+      archivedOrders: closing.archivedOrders || 0
     }, user.id);
     return json(res, 201, { closing });
   }
