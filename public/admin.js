@@ -3,7 +3,19 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const money = (cents) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((Number(cents) || 0) / 100);
 const adminPrice = (cents) => `${((Number(cents) || 0) / 100).toFixed(2).replace('.', ',')} US$`;
 const statuses = ['Nuevo', 'Aceptado', 'En preparacion', 'Listo', 'En camino', 'Entregado', 'Cancelado'];
-const availablePermissions = ['*', 'orders:view', 'orders:update', 'orders:kds', 'orders:update-ready', 'orders:view-assigned', 'orders:update-delivered', 'orders:charge', 'payments:update', 'catalog:view', 'reports:view', 'delivery:view', 'audit:view'];
+const availablePermissions = [
+  '*',
+  'orders:view', 'orders:update', 'orders:kds', 'orders:update-ready', 'orders:view-assigned', 'orders:update-delivered', 'orders:charge',
+  'payments:update',
+  'catalog:view', 'inventory:manage',
+  'cash:view', 'cash:open', 'cash:close', 'accounting:view',
+  'reports:view', 'reports:export',
+  'delivery:view',
+  'settings:view', 'settings:update',
+  'audit:view',
+  'backups:view', 'backups:create', 'backups:download',
+  'users:manage', 'roles:manage'
+];
 const ORDER_ALERT_SOUND_URL = '/assets/sounds/new-order-alert.mp3';
 const detectedPrintersState = {
   loaded: false,
@@ -18,6 +30,7 @@ const DEFAULT_PRINTER_CONFIG = {
       name: 'Caja',
       type: 'thermal',
       ticketWidthMm: 80,
+      fontSizePt: 13,
       connectionMode: 'browser',
       systemPrinterName: '',
       networkHost: '',
@@ -28,6 +41,7 @@ const DEFAULT_PRINTER_CONFIG = {
       name: 'Cocina',
       type: 'thermal',
       ticketWidthMm: 80,
+      fontSizePt: 13,
       connectionMode: 'browser',
       systemPrinterName: '',
       networkHost: '',
@@ -38,6 +52,7 @@ const DEFAULT_PRINTER_CONFIG = {
       name: 'Kiosko',
       type: 'thermal',
       ticketWidthMm: 80,
+      fontSizePt: 14,
       connectionMode: 'browser',
       systemPrinterName: '',
       networkHost: '',
@@ -353,10 +368,11 @@ function playOrderAlertAudio() {
 }
 
 async function renderDashboard() {
-  const [reports, ordersData, settings] = await Promise.all([
+  const [reports, ordersData, settings, systemHealth] = await Promise.all([
     api('/api/admin/reports'),
     api('/api/admin/orders'),
-    api('/api/admin/settings').catch(() => ({ business: null }))
+    api('/api/admin/settings').catch(() => ({ business: null })),
+    api('/api/admin/system-health').catch(() => null)
   ]);
   if (settings.business) applyAdminBrand(settings.business);
   const recent = ordersData.orders.slice(0, 6);
@@ -380,6 +396,7 @@ async function renderDashboard() {
         <div><span>${readyOrders.length}</span><strong>Listos</strong></div>
       </div>
     </section>
+    ${systemHealthPanel(systemHealth)}
     <div class="metrics metrics--pro">
       ${metric('Ventas hoy', money(reports.today.salesCents), `${reports.today.orders} pedidos`, 'sales')}
       ${metric('Ventas semana', money(reports.week.salesCents), `${reports.week.orders} pedidos`, 'week')}
@@ -428,6 +445,57 @@ function metric(label, value, detail, tone = '') {
       <strong>${escapeHtml(value)}</strong>
       <span class="muted">${escapeHtml(detail)}</span>
     </div>
+  `;
+}
+
+function systemHealthPanel(health) {
+  if (!health) return '';
+  const alerts = health.alerts || [];
+  const summary = health.summary || {};
+  const visibleAlerts = alerts.slice(0, 5);
+  return `
+    <section class="system-alert-panel ${summary.criticalAlerts ? 'has-danger' : alerts.length ? 'has-warning' : 'is-ok'}">
+      <div>
+        <span class="eyebrow">Centro de control</span>
+        <h2>${summary.ok ? 'Sistema listo' : 'Revisar operacion'}</h2>
+        <p>${summary.passed || 0}/${summary.total || 0} controles correctos · ${summary.alerts || 0} alerta(s)</p>
+      </div>
+      <div class="system-alert-list">
+        ${visibleAlerts.length ? visibleAlerts.map((alert) => `
+          <article class="system-alert system-alert--${escapeHtml(alert.severity)}">
+            <strong>${escapeHtml(alert.title)}</strong>
+            <span>${escapeHtml(alert.detail)}</span>
+          </article>
+        `).join('') : '<article class="system-alert system-alert--ok"><strong>Sin alertas criticas</strong><span>Operacion estable.</span></article>'}
+      </div>
+    </section>
+  `;
+}
+
+function checklistPanel(health) {
+  if (!health) return '';
+  const items = health.checklist || [];
+  return `
+    <section class="settings-block production-checklist">
+      <header>
+        <div>
+          <h2>Checklist pre-produccion</h2>
+          <p class="muted">${health.summary?.passed || 0}/${health.summary?.total || 0} controles listos</p>
+        </div>
+        <span class="badge">${health.summary?.ok ? 'Listo' : 'Pendiente'}</span>
+      </header>
+      <div class="checklist-grid">
+        ${items.map((item) => `
+          <article class="${item.ok ? 'is-ok' : 'is-pending'}">
+            <b>${item.ok ? 'OK' : '!'}</b>
+            <div>
+              <strong>${escapeHtml(item.label)}</strong>
+              <span>${escapeHtml(item.detail)}</span>
+            </div>
+          </article>
+        `).join('')}
+      </div>
+    </section>
   `;
 }
 
@@ -1921,12 +1989,38 @@ function deliveryZoneCards(zones) {
 
 async function renderReports() {
   const reports = await api('/api/admin/reports');
+  const advanced = reports.advanced || {};
+  const growth = advanced.growth || {};
+  const health = advanced.health || {};
+  const operations = advanced.operations || {};
+  const customers = advanced.customers || {};
+  const modifiers = advanced.modifiers || {};
+  const inventoryAlerts = advanced.inventoryAlerts || {};
+  const profitability = advanced.profitability || {};
   $('#reportsSection').innerHTML = `
+    <div class="toolbar">
+      <div>
+        <h2>Reportes avanzados</h2>
+        <p class="muted">Ventas, operacion, clientes, rentabilidad e inventario.</p>
+      </div>
+      <div class="actions-row">
+        <a class="btn btn--soft btn--small" href="/api/admin/reports/export.csv?type=sales-by-day">CSV ventas</a>
+        <a class="btn btn--soft btn--small" href="/api/admin/reports/export.csv?type=top-products">CSV productos</a>
+        <a class="btn btn--soft btn--small" href="/api/admin/reports/export.csv?type=profitability">CSV rentabilidad</a>
+        <a class="btn btn--ghost btn--small" href="/api/admin/reports/export.csv?type=customers">CSV clientes</a>
+      </div>
+    </div>
     <div class="metrics metrics--pro">
       ${metric('Hoy', money(reports.today.salesCents), `${reports.today.orders} pedidos`, 'sales')}
       ${metric('Semana', money(reports.week.salesCents), `${reports.week.orders} pedidos`, 'week')}
       ${metric('Mes', money(reports.month.salesCents), `${reports.month.orders} pedidos`, 'ticket')}
       ${metric('Promedio', money(reports.all.averageTicketCents), 'Por pedido')}
+    </div>
+    <div class="metrics metrics--pro">
+      ${metric('Crecimiento semana', `${signedPercent(growth.weekSalesDeltaPct)}%`, 'Vs semana anterior', 'week')}
+      ${metric('Crecimiento mes', `${signedPercent(growth.monthSalesDeltaPct)}%`, 'Vs mes anterior', 'sales')}
+      ${metric('Aceptacion promedio', `${operations.averageAcceptMinutes || 0} min`, 'Nuevo a aceptado', 'ticket')}
+      ${metric('Alertas stock', inventoryAlerts.totalAlerts || 0, 'Productos e insumos bajos', (inventoryAlerts.totalAlerts || 0) ? 'danger' : '')}
     </div>
     <div class="reports-grid">
       <section class="panel report-card report-card--wide">
@@ -1976,11 +2070,77 @@ async function renderReports() {
         ${barChart(reports.byCategory, 'salesCents', 'sales')}
       </section>
     </div>
+    <div class="reports-grid">
+      <section class="panel report-card">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Operacion</span>
+            <h2>Tiempos del pedido</h2>
+          </div>
+        </div>
+        ${operationalSummary(operations)}
+      </section>
+      <section class="panel report-card">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Clientes</span>
+            <h2>Recompra</h2>
+          </div>
+          <span class="badge">${customers.repeatRatePct || 0}%</span>
+        </div>
+        ${customerSummary(customers)}
+      </section>
+      <section class="panel report-card">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Demanda</span>
+            <h2>Franja horaria</h2>
+          </div>
+        </div>
+        ${barChart(advanced.byDayPart || [], 'salesCents', 'sales')}
+      </section>
+      <section class="panel report-card">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Estado</span>
+            <h2>Embudo del mes</h2>
+          </div>
+          <span class="badge">${health.monthCancellationRatePct || 0}% cancelacion</span>
+        </div>
+        ${barChart(advanced.statusFunnel || [], 'orders', 'orders')}
+      </section>
+    </div>
+    <section class="panel" style="margin-top:14px">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">Mapa de calor</span>
+          <h2>Horas fuertes de los ultimos 30 dias</h2>
+        </div>
+      </div>
+      ${heatmap(advanced.hourlyHeatmap || [])}
+    </section>
+    <div class="page-grid" style="margin-top:14px">
+      <section class="panel"><h2>Opcionales y toppings mas pedidos</h2>${usageTable(modifiers.topOptions || [])}</section>
+      <section class="panel"><h2>Personalizaciones mas comunes</h2>${usageTable(modifiers.topVariants || [], 'quantity', false)}</section>
+    </div>
+    <div class="page-grid" style="margin-top:14px">
+      <section class="panel"><h2>Productos con mejor utilidad</h2>${profitabilityTable(profitability.leaders || [])}</section>
+      <section class="panel"><h2>Productos de margen bajo</h2>${profitabilityTable(profitability.lowMargin || [])}</section>
+    </div>
     <div class="page-grid">
       <section class="panel"><h2>Metodo de entrega</h2>${simpleTable(reports.byDelivery)}</section>
       <section class="panel"><h2>Reporte por cajero/usuario</h2>${simpleTable(reports.byCashier)}</section>
     </div>
+    <div class="page-grid" style="margin-top:14px">
+      <section class="panel"><h2>Mejores clientes</h2>${customersTable(customers.topCustomers || [])}</section>
+      <section class="panel"><h2>Alertas de inventario</h2>${inventoryAlertTable(inventoryAlerts)}</section>
+    </div>
   `;
+}
+
+function signedPercent(value) {
+  const number = Number(value || 0);
+  return `${number > 0 ? '+' : ''}${number}`;
 }
 
 function barChart(rows, valueKey, labelKey) {
@@ -2021,6 +2181,115 @@ function simpleTable(rows) {
   return `<div class="table-wrap" style="margin-top:14px"><table class="table"><thead><tr><th>Nombre</th><th>Pedidos</th><th>Ventas</th></tr></thead><tbody>
     ${rows.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${row.orders}</td><td>${money(row.salesCents)}</td></tr>`).join('')}
   </tbody></table></div>`;
+}
+
+function operationalSummary(operations = {}) {
+  return `
+    <div class="insight-grid">
+      <div><span>Aceptar</span><strong>${operations.averageAcceptMinutes || 0} min</strong></div>
+      <div><span>Preparar</span><strong>${operations.averagePrepMinutes || 0} min</strong></div>
+      <div><span>Listo</span><strong>${operations.averageReadyMinutes || 0} min</strong></div>
+      <div><span>Entregado</span><strong>${operations.averageDeliveredMinutes || 0} min</strong></div>
+    </div>
+    ${operationDeliveryTable(operations.byDelivery || [])}
+  `;
+}
+
+function operationDeliveryTable(rows) {
+  if (!rows.length) return '<div class="empty-state">Sin datos operativos.</div>';
+  return `<div class="mini-table">
+    ${rows.map((row) => `
+      <div>
+        <strong>${escapeHtml(row.name)}</strong>
+        <span>${row.orders} pedidos</span>
+        <span>Listo ${row.readyMinutes || 0} min</span>
+        <b>${row.deliveredMinutes || 0} min</b>
+      </div>
+    `).join('')}
+  </div>`;
+}
+
+function customerSummary(customers = {}) {
+  return `
+    <div class="insight-grid">
+      <div><span>Clientes</span><strong>${customers.totalCustomers || 0}</strong></div>
+      <div><span>Recurrentes</span><strong>${customers.repeatCustomers || 0}</strong></div>
+      <div><span>Recompra</span><strong>${customers.repeatRatePct || 0}%</strong></div>
+      <div><span>Pedidos/cliente</span><strong>${customers.averageOrdersPerCustomer || 0}</strong></div>
+    </div>
+  `;
+}
+
+function usageTable(rows, valueKey = 'quantity', showMoney = true) {
+  if (!rows.length) return '<div class="empty-state">Sin datos.</div>';
+  return `<div class="table-wrap" style="margin-top:14px"><table class="table"><thead><tr><th>Nombre</th><th>Grupo</th><th>Cantidad</th>${showMoney ? '<th>Ventas</th>' : ''}</tr></thead><tbody>
+    ${rows.slice(0, 10).map((row) => `<tr>
+      <td><strong>${escapeHtml(row.name)}</strong></td>
+      <td>${escapeHtml(row.groupName || '')}</td>
+      <td>${escapeHtml(row[valueKey] || 0)}</td>
+      ${showMoney ? `<td>${money(row.salesCents || 0)}</td>` : ''}
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+function profitabilityTable(rows) {
+  if (!rows.length) return '<div class="empty-state">Sin ventas con receta este mes.</div>';
+  return `<div class="table-wrap" style="margin-top:14px"><table class="table"><thead><tr><th>Producto</th><th>Vendidos</th><th>Utilidad</th><th>Margen</th></tr></thead><tbody>
+    ${rows.map((row) => `<tr>
+      <td><strong>${escapeHtml(row.productName)}</strong><div class="muted">${escapeHtml(row.categoryName || '')}</div></td>
+      <td>${row.soldThisMonth || 0}</td>
+      <td>${money(row.grossProfitCents || 0)}</td>
+      <td><strong>${row.marginPct || 0}%</strong></td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+function customersTable(rows) {
+  if (!rows.length) return '<div class="empty-state">Sin clientes todavia.</div>';
+  return `<div class="table-wrap" style="margin-top:14px"><table class="table"><thead><tr><th>Cliente</th><th>Pedidos</th><th>Ventas</th></tr></thead><tbody>
+    ${rows.map((row) => `<tr>
+      <td><strong>${escapeHtml(row.name)}</strong><div class="muted">${escapeHtml(row.phone || '')}</div></td>
+      <td>${row.orders}</td>
+      <td>${money(row.salesCents)}</td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+function inventoryAlertTable(alerts = {}) {
+  const products = (alerts.products || []).map((item) => ({ ...item, type: 'Producto', unit: 'unid.' }));
+  const ingredients = (alerts.ingredients || []).map((item) => ({ ...item, type: 'Insumo' }));
+  const rows = [...products, ...ingredients];
+  if (!rows.length) return '<div class="empty-state">Inventario dentro de rango.</div>';
+  return `<div class="table-wrap" style="margin-top:14px"><table class="table"><thead><tr><th>Item</th><th>Stock</th><th>Minimo</th></tr></thead><tbody>
+    ${rows.map((row) => `<tr>
+      <td><strong>${escapeHtml(row.name)}</strong><div class="muted">${escapeHtml(row.type)}${row.categoryName ? ` · ${escapeHtml(row.categoryName)}` : ''}</div></td>
+      <td>${row.stockQuantity} ${escapeHtml(row.unit || '')}</td>
+      <td>${row.lowStockThreshold}</td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+function heatmap(rows) {
+  if (!rows.length) return '<div class="empty-state">Sin datos suficientes.</div>';
+  const hours = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+  const days = ['Domingo', 'Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado'];
+  const max = Math.max(1, ...rows.map((row) => Number(row.orders || 0)));
+  const byKey = new Map(rows.map((row) => [`${row.dayIndex}:${row.hour}`, row]));
+  return `
+    <div class="report-heatmap">
+      <span></span>
+      ${hours.map((hour) => `<b>${hour}</b>`).join('')}
+      ${days.map((day, dayIndex) => `
+        <strong>${day.slice(0, 3)}</strong>
+        ${hours.map((hour) => {
+          const item = byKey.get(`${dayIndex}:${hour}`) || { orders: 0, salesCents: 0 };
+          const strength = Math.min(1, Number(item.orders || 0) / max);
+          const lightness = Math.round(94 - (strength * 34));
+          return `<span title="${escapeHtml(day)} ${hour}:00 · ${item.orders || 0} pedidos · ${money(item.salesCents || 0)}" style="background:hsl(154 42% ${lightness}%)">${item.orders || ''}</span>`;
+        }).join('')}
+      `).join('')}
+    </div>
+  `;
 }
 
 function cashRegisterPanel(data, today) {
@@ -2476,6 +2745,7 @@ function normalizeAdminThermalPrinter(input, defaults, legacy = {}) {
     enabled: Boolean(config.enabled ?? legacy.enabled ?? defaults.enabled),
     type: 'thermal',
     ticketWidthMm: printerTicketWidth(config.ticketWidthMm ?? legacy.ticketWidthMm, defaults.ticketWidthMm),
+    fontSizePt: printerRange(config.fontSizePt ?? legacy.fontSizePt, 9, 18, defaults.fontSizePt),
     connectionMode: printerConnectionMode(config.connectionMode ?? legacy.connectionMode, defaults.connectionMode),
     systemPrinterName: String(config.systemPrinterName ?? legacy.systemPrinterName ?? defaults.systemPrinterName ?? ''),
     networkHost: String(config.networkHost ?? legacy.networkHost ?? defaults.networkHost ?? ''),
@@ -2581,6 +2851,9 @@ function renderThermalPrinterSettings(role, title, description, printer) {
         <label>Ancho de ticket
           <select class="select" name="${prefix}WidthMm">${ticketWidthOptions(printer.ticketWidthMm)}</select>
         </label>
+        <label>Tamaño de letra
+          <input class="field" name="${prefix}FontSizePt" type="number" min="9" max="18" step="0.5" value="${printer.fontSizePt || 13}">
+        </label>
         <label>Conexion
           <select class="select" name="${prefix}ConnectionMode">${printerConnectionOptions(printer.connectionMode)}</select>
         </label>
@@ -2685,7 +2958,10 @@ async function detectConnectedPrinters() {
 }
 
 async function renderSettings() {
-  const data = await api('/api/admin/settings');
+  const [data, systemHealth] = await Promise.all([
+    api('/api/admin/settings'),
+    api('/api/admin/system-health').catch(() => null)
+  ]);
   const business = data.business;
   const printerConfig = normalizeAdminPrinterConfig(business.printerConfig || {});
   const printers = printerConfig.printers;
@@ -2718,6 +2994,7 @@ async function renderSettings() {
       </aside>
 
       <form class="settings-main" id="settingsForm">
+        ${checklistPanel(systemHealth)}
         <section class="settings-block">
           <header>
             <h2>Identidad</h2>
@@ -2827,6 +3104,7 @@ async function renderSettings() {
             name: form.elements.printerCajaName.value,
             type: 'thermal',
             ticketWidthMm: Number(form.elements.printerCajaWidthMm.value || 80),
+            fontSizePt: Number(form.elements.printerCajaFontSizePt.value || 13),
             connectionMode: form.elements.printerCajaConnectionMode.value,
             systemPrinterName: form.elements.printerCajaSystemPrinterName.value,
             networkHost: form.elements.printerCajaNetworkHost.value,
@@ -2837,6 +3115,7 @@ async function renderSettings() {
             name: form.elements.printerCocinaName.value,
             type: 'thermal',
             ticketWidthMm: Number(form.elements.printerCocinaWidthMm.value || 80),
+            fontSizePt: Number(form.elements.printerCocinaFontSizePt.value || 13),
             connectionMode: form.elements.printerCocinaConnectionMode.value,
             systemPrinterName: form.elements.printerCocinaSystemPrinterName.value,
             networkHost: form.elements.printerCocinaNetworkHost.value,
@@ -2847,6 +3126,7 @@ async function renderSettings() {
             name: form.elements.printerKioskName.value,
             type: 'thermal',
             ticketWidthMm: Number(form.elements.printerKioskWidthMm.value || 80),
+            fontSizePt: Number(form.elements.printerKioskFontSizePt.value || 14),
             connectionMode: form.elements.printerKioskConnectionMode.value,
             systemPrinterName: form.elements.printerKioskSystemPrinterName.value,
             networkHost: form.elements.printerKioskNetworkHost.value,
@@ -2935,7 +3215,10 @@ async function renderAudit() {
             <h2>Auditoria</h2>
             <p class="muted">Acciones sensibles, accesos y cambios administrativos.</p>
           </div>
-          <input class="field" id="auditSearch" style="width:240px" placeholder="Filtrar accion">
+          <div class="actions-row">
+            <input class="field" id="auditSearch" style="width:240px" placeholder="Filtrar accion">
+            <a class="btn btn--soft btn--small" href="/api/admin/audit/export.csv">Exportar CSV</a>
+          </div>
         </div>
         <div class="table-wrap">
           <table class="table">
@@ -3180,6 +3463,7 @@ function prepareAdminPrint(layout = 'ticket', role = 'caja') {
   const printer = config.printers[role] || config.printers.caja;
   target.dataset.printLayout = layout;
   target.style.setProperty('--ticket-width', `${Number(printer.ticketWidthMm || 80)}mm`);
+  target.style.setProperty('--ticket-font-size', `${Number(printer.fontSizePt || 13)}pt`);
   target.style.setProperty('--label-width', `${Number(config.printers.etiquetas.labelWidthIn || 2)}in`);
   target.style.setProperty('--label-height', `${Number(config.printers.etiquetas.labelHeightIn || 1)}in`);
   target.innerHTML = '';

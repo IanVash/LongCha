@@ -23,10 +23,18 @@ export const ORDER_STATUSES = [
 
 const ROLE_PERMISSIONS = {
   Administrador: ['*'],
-  Cajero: ['orders:view', 'orders:update', 'orders:charge', 'reports:view', 'delivery:view', 'payments:update'],
+  Cajero: [
+    'orders:view', 'orders:update', 'orders:charge', 'payments:update',
+    'cash:view', 'cash:open', 'cash:close',
+    'reports:view', 'reports:export', 'delivery:view'
+  ],
   Cocina: ['orders:view', 'orders:kds', 'orders:update-ready'],
   Repartidor: ['orders:view-assigned', 'orders:update-delivered'],
-  Supervisor: ['orders:view', 'reports:view', 'catalog:view', 'audit:view']
+  Supervisor: [
+    'orders:view', 'reports:view', 'reports:export', 'catalog:view',
+    'accounting:view', 'cash:view', 'audit:view', 'settings:view',
+    'backups:view', 'backups:download'
+  ]
 };
 
 export class ValidationError extends Error {
@@ -64,6 +72,7 @@ const DEFAULT_PRINTER_CONFIG = {
       name: 'Caja',
       type: 'thermal',
       ticketWidthMm: 80,
+      fontSizePt: 13,
       connectionMode: 'browser',
       systemPrinterName: '',
       networkHost: '',
@@ -74,6 +83,7 @@ const DEFAULT_PRINTER_CONFIG = {
       name: 'Cocina',
       type: 'thermal',
       ticketWidthMm: 80,
+      fontSizePt: 13,
       connectionMode: 'browser',
       systemPrinterName: '',
       networkHost: '',
@@ -84,6 +94,7 @@ const DEFAULT_PRINTER_CONFIG = {
       name: 'Kiosko',
       type: 'thermal',
       ticketWidthMm: 80,
+      fontSizePt: 14,
       connectionMode: 'browser',
       systemPrinterName: '',
       networkHost: '',
@@ -181,6 +192,7 @@ function normalizeThermalPrinter(input, defaults, legacy = {}) {
     name: clean(config.name ?? defaults.name, 80),
     type: 'thermal',
     ticketWidthMm: normalizeTicketWidth(config.ticketWidthMm ?? legacy.ticketWidthMm, defaults.ticketWidthMm),
+    fontSizePt: normalizeRange(config.fontSizePt ?? legacy.fontSizePt, 9, 18, defaults.fontSizePt),
     connectionMode: normalizeConnectionMode(config.connectionMode ?? legacy.connectionMode, defaults.connectionMode),
     systemPrinterName: clean(config.systemPrinterName ?? legacy.systemPrinterName ?? defaults.systemPrinterName, 160),
     networkHost: clean(config.networkHost ?? legacy.networkHost ?? defaults.networkHost, 160),
@@ -1051,6 +1063,19 @@ function ensureOperationalDefaults() {
       updateRoleStmt.run(JSON.stringify(merged), name);
     }
     db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('role_permissions_migrated_20260525', '1')").run();
+  }
+
+  const granularPermissionMigration = db.prepare("SELECT value FROM settings WHERE key = 'role_permissions_migrated_20260601'").get();
+  if (granularPermissionMigration?.value !== '1') {
+    const updateRoleStmt = db.prepare('UPDATE roles SET permissions_json = ? WHERE name = ?');
+    for (const [name, baseline] of Object.entries(ROLE_PERMISSIONS)) {
+      const role = db.prepare('SELECT permissions_json FROM roles WHERE name = ?').get(name);
+      if (!role) continue;
+      const current = parseJson(role.permissions_json, []);
+      const merged = current.includes('*') ? current : [...new Set([...current, ...baseline])];
+      updateRoleStmt.run(JSON.stringify(merged), name);
+    }
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('role_permissions_migrated_20260601', '1')").run();
   }
 }
 
@@ -3808,11 +3833,253 @@ export function listAuditLogs({ limit = 120, action = '', userId = null } = {}) 
   }));
 }
 
+function percent(value, total, decimals = 1) {
+  const denominator = Number(total || 0);
+  if (!denominator) return 0;
+  return Number(((Number(value || 0) / denominator) * 100).toFixed(decimals));
+}
+
+function percentChange(current, previous, decimals = 1) {
+  const base = Number(previous || 0);
+  if (!base) return Number(current || 0) > 0 ? 100 : 0;
+  return Number((((Number(current || 0) - base) / base) * 100).toFixed(decimals));
+}
+
+function reportMoneyRow(row, nameKey = 'name') {
+  return {
+    name: row[nameKey],
+    orders: Number(row.orders || 0),
+    salesCents: Number(row.sales_cents || 0),
+    sales: money(row.sales_cents)
+  };
+}
+
+function metricSummary(row) {
+  return {
+    orders: Number(row?.orders || 0),
+    salesCents: Number(row?.sales || row?.sales_cents || 0),
+    sales: money(row?.sales || row?.sales_cents || 0)
+  };
+}
+
+function averageMinutes(value) {
+  const minutes = Number(value || 0);
+  return Number.isFinite(minutes) ? Math.max(0, Math.round(minutes)) : 0;
+}
+
+function getOperationalMetrics() {
+  const accepted = `
+    SELECT order_id, MIN(created_at) AS created_at
+    FROM order_status_history
+    WHERE status = 'Aceptado'
+    GROUP BY order_id
+  `;
+  const ready = `
+    SELECT order_id, MIN(created_at) AS created_at
+    FROM order_status_history
+    WHERE status = 'Listo'
+    GROUP BY order_id
+  `;
+  const delivered = `
+    SELECT order_id, MIN(created_at) AS created_at
+    FROM order_status_history
+    WHERE status = 'Entregado'
+    GROUP BY order_id
+  `;
+  const row = db.prepare(`
+    SELECT
+      AVG((julianday(a.created_at) - julianday(o.created_at)) * 1440) AS accept_minutes,
+      AVG((julianday(r.created_at) - julianday(a.created_at)) * 1440) AS prep_minutes,
+      AVG((julianday(r.created_at) - julianday(o.created_at)) * 1440) AS ready_minutes,
+      AVG((julianday(d.created_at) - julianday(o.created_at)) * 1440) AS delivered_minutes
+    FROM orders o
+    LEFT JOIN (${accepted}) a ON a.order_id = o.id
+    LEFT JOIN (${ready}) r ON r.order_id = o.id
+    LEFT JOIN (${delivered}) d ON d.order_id = o.id
+    WHERE o.status != 'Cancelado'
+  `).get();
+  const byDelivery = db.prepare(`
+    SELECT dm.name,
+      COUNT(o.id) AS orders,
+      AVG((julianday(r.created_at) - julianday(o.created_at)) * 1440) AS ready_minutes,
+      AVG((julianday(d.created_at) - julianday(o.created_at)) * 1440) AS delivered_minutes
+    FROM orders o
+    JOIN delivery_methods dm ON dm.id = o.delivery_method_id
+    LEFT JOIN (${ready}) r ON r.order_id = o.id
+    LEFT JOIN (${delivered}) d ON d.order_id = o.id
+    WHERE o.status != 'Cancelado'
+    GROUP BY dm.name
+    ORDER BY orders DESC
+  `).all().map((item) => ({
+    name: item.name,
+    orders: Number(item.orders || 0),
+    readyMinutes: averageMinutes(item.ready_minutes),
+    deliveredMinutes: averageMinutes(item.delivered_minutes)
+  }));
+  return {
+    averageAcceptMinutes: averageMinutes(row.accept_minutes),
+    averagePrepMinutes: averageMinutes(row.prep_minutes),
+    averageReadyMinutes: averageMinutes(row.ready_minutes),
+    averageDeliveredMinutes: averageMinutes(row.delivered_minutes),
+    byDelivery
+  };
+}
+
+function getModifierMetrics() {
+  const rows = db.prepare(`
+    SELECT oi.quantity, oi.extras_json, oi.variants_json
+    FROM order_items oi
+    JOIN orders o ON o.id = oi.order_id
+    WHERE o.status != 'Cancelado'
+  `).all();
+  const optionMap = new Map();
+  const variantMap = new Map();
+  for (const row of rows) {
+    const quantity = Number(row.quantity || 1);
+    const extras = parseJson(row.extras_json, []);
+    for (const extra of Array.isArray(extras) ? extras : []) {
+      const name = clean(extra.name, 120);
+      if (!name) continue;
+      const groupName = clean(extra.groupName || 'Extras', 120);
+      const key = `${groupName}::${name}`;
+      const current = optionMap.get(key) || {
+        name,
+        groupName,
+        quantity: 0,
+        salesCents: 0
+      };
+      current.quantity += quantity;
+      current.salesCents += Number(extra.priceCents || 0) * quantity;
+      optionMap.set(key, current);
+    }
+    const variants = parseJson(row.variants_json, {});
+    for (const [groupName, selected] of Object.entries(variants || {})) {
+      if (selected === null || selected === undefined || selected === '') continue;
+      const values = Array.isArray(selected) ? selected : [selected];
+      for (const value of values) {
+        const name = clean(value, 120);
+        if (!name) continue;
+        const key = `${clean(groupName, 120)}::${name}`;
+        const current = variantMap.get(key) || {
+          name,
+          groupName: clean(groupName, 120),
+          quantity: 0
+        };
+        current.quantity += quantity;
+        variantMap.set(key, current);
+      }
+    }
+  }
+  const options = [...optionMap.values()]
+    .map((item) => ({ ...item, sales: money(item.salesCents) }))
+    .sort((a, b) => b.quantity - a.quantity || b.salesCents - a.salesCents);
+  const variants = [...variantMap.values()].sort((a, b) => b.quantity - a.quantity);
+  const toppingPattern = /(topping|boba|extra|jelly|popping|perla|tapioca|crema|leche|milk)/i;
+  return {
+    topOptions: options.slice(0, 12),
+    topToppings: options.filter((item) => toppingPattern.test(`${item.groupName} ${item.name}`)).slice(0, 10),
+    topVariants: variants.slice(0, 12)
+  };
+}
+
+function getCustomerMetrics() {
+  const totals = db.prepare(`
+    SELECT
+      COUNT(*) AS total_customers,
+      SUM(CASE WHEN orders_count > 1 THEN 1 ELSE 0 END) AS repeat_customers,
+      AVG(orders_count) AS average_orders
+    FROM (
+      SELECT customer_id, COUNT(*) AS orders_count
+      FROM orders
+      WHERE status != 'Cancelado'
+      GROUP BY customer_id
+    )
+  `).get();
+  const topCustomers = db.prepare(`
+    SELECT c.name, c.phone, COUNT(o.id) AS orders, COALESCE(SUM(o.total_cents), 0) AS sales_cents,
+      MAX(o.created_at) AS last_order_at
+    FROM orders o
+    JOIN customers c ON c.id = o.customer_id
+    WHERE o.status != 'Cancelado'
+    GROUP BY c.id
+    ORDER BY sales_cents DESC, orders DESC
+    LIMIT 10
+  `).all().map((row) => ({
+    name: row.name,
+    phone: row.phone,
+    orders: Number(row.orders || 0),
+    salesCents: Number(row.sales_cents || 0),
+    sales: money(row.sales_cents),
+    lastOrderAt: row.last_order_at
+  }));
+  return {
+    totalCustomers: Number(totals.total_customers || 0),
+    repeatCustomers: Number(totals.repeat_customers || 0),
+    repeatRatePct: percent(totals.repeat_customers, totals.total_customers),
+    averageOrdersPerCustomer: Number(Number(totals.average_orders || 0).toFixed(2)),
+    topCustomers
+  };
+}
+
+function getInventoryAlertsForReports() {
+  const products = db.prepare(`
+    SELECT p.id, p.name, c.name AS category_name, p.stock_quantity, p.low_stock_threshold
+    FROM products p
+    JOIN categories c ON c.id = p.category_id
+    WHERE p.stock_enabled = 1 AND p.stock_quantity <= p.low_stock_threshold
+    ORDER BY p.stock_quantity ASC, p.name
+    LIMIT 12
+  `).all().map((row) => ({
+    id: row.id,
+    name: row.name,
+    categoryName: row.category_name,
+    stockQuantity: Number(row.stock_quantity || 0),
+    lowStockThreshold: Number(row.low_stock_threshold || 0)
+  }));
+  const ingredients = db.prepare(`
+    SELECT id, name, unit, stock_quantity, low_stock_threshold
+    FROM inventory_items
+    WHERE active = 1 AND low_stock_threshold > 0 AND stock_quantity <= low_stock_threshold
+    ORDER BY stock_quantity ASC, name
+    LIMIT 12
+  `).all().map((row) => ({
+    id: row.id,
+    name: row.name,
+    unit: row.unit,
+    stockQuantity: Number(row.stock_quantity || 0),
+    lowStockThreshold: Number(row.low_stock_threshold || 0)
+  }));
+  return {
+    products,
+    ingredients,
+    totalAlerts: products.length + ingredients.length
+  };
+}
+
+function getProfitabilityMetrics() {
+  const costing = getProductCosting().filter((item) => Number(item.soldThisMonth || 0) > 0);
+  const toProfitRow = (item) => ({
+    productId: item.productId,
+    productName: item.productName,
+    categoryName: item.categoryName,
+    soldThisMonth: item.soldThisMonth,
+    priceCents: item.priceCents,
+    recipeCostCents: item.recipeCostCents,
+    grossProfitCents: item.grossProfitCents,
+    marginPct: item.marginPct
+  });
+  return {
+    leaders: [...costing].sort((a, b) => b.grossProfitCents - a.grossProfitCents).slice(0, 8).map(toProfitRow),
+    lowMargin: [...costing].sort((a, b) => a.marginPct - b.marginPct).slice(0, 8).map(toProfitRow)
+  };
+}
+
 export function getReports() {
   const notCancelled = "status != 'Cancelado'";
   const scalar = (sql, ...params) => db.prepare(sql).get(...params);
   const todayDate = localBusinessDate();
   const currentMonth = todayDate.slice(0, 7);
+  const previousMonth = scalar("SELECT strftime('%Y-%m', date(?, 'start of month', '-1 month')) AS month", todayDate).month;
   const today = scalar(`
     SELECT COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales
     FROM orders
@@ -3821,13 +4088,25 @@ export function getReports() {
   const week = scalar(`
     SELECT COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales
     FROM orders
-    WHERE ${notCancelled} AND ${businessDateSql()} >= date(?, '-6 day')
-  `, todayDate);
+    WHERE ${notCancelled} AND ${businessDateSql()} BETWEEN date(?, '-6 day') AND ?
+  `, todayDate, todayDate);
+  const previousWeek = scalar(`
+    SELECT COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales
+    FROM orders
+    WHERE ${notCancelled}
+      AND ${businessDateSql()} >= date(?, '-13 day')
+      AND ${businessDateSql()} < date(?, '-6 day')
+  `, todayDate, todayDate);
   const month = scalar(`
     SELECT COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales
     FROM orders
     WHERE ${notCancelled} AND ${businessMonthSql()} = ?
   `, currentMonth);
+  const previousMonthSummary = scalar(`
+    SELECT COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales
+    FROM orders
+    WHERE ${notCancelled} AND ${businessMonthSql()} = ?
+  `, previousMonth);
   const all = scalar(`
     SELECT COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales,
       COALESCE(AVG(total_cents), 0) AS average_ticket
@@ -3835,48 +4114,59 @@ export function getReports() {
     WHERE ${notCancelled}
   `);
   const cancelled = scalar("SELECT COUNT(*) AS total FROM orders WHERE status = 'Cancelado'");
+  const monthStatusTotals = scalar(`
+    SELECT COUNT(*) AS total_orders,
+      SUM(CASE WHEN status = 'Cancelado' THEN 1 ELSE 0 END) AS cancelled_orders
+    FROM orders
+    WHERE ${businessMonthSql()} = ?
+  `, currentMonth);
 
   const topProducts = db.prepare(`
-    SELECT oi.product_name AS name, SUM(oi.quantity) AS quantity, SUM(oi.line_total_cents) AS sales_cents
+    SELECT oi.product_id, oi.product_name AS name, COALESCE(c.name, 'Sin categoria') AS category_name,
+      SUM(oi.quantity) AS quantity, SUM(oi.line_total_cents) AS sales_cents
     FROM order_items oi
     JOIN orders o ON o.id = oi.order_id
+    LEFT JOIN products p ON p.id = oi.product_id
+    LEFT JOIN categories c ON c.id = p.category_id
     WHERE o.status != 'Cancelado'
-    GROUP BY oi.product_name
+    GROUP BY oi.product_id, oi.product_name, c.name
     ORDER BY quantity DESC, sales_cents DESC
-    LIMIT 8
+    LIMIT 10
   `).all().map((row) => ({
+    productId: row.product_id,
     name: row.name,
-    quantity: row.quantity,
-    salesCents: row.sales_cents,
+    categoryName: row.category_name,
+    quantity: Number(row.quantity || 0),
+    salesCents: Number(row.sales_cents || 0),
     sales: money(row.sales_cents)
   }));
 
   const byPayment = db.prepare(`
-    SELECT pm.name, COUNT(*) AS orders, COALESCE(SUM(o.total_cents), 0) AS sales_cents
+    SELECT pm.name, COUNT(*) AS orders, COALESCE(SUM(o.total_cents), 0) AS sales_cents,
+      COALESCE(AVG(o.total_cents), 0) AS average_ticket_cents
     FROM orders o
     JOIN payment_methods pm ON pm.id = o.payment_method_id
     WHERE o.status != 'Cancelado'
     GROUP BY pm.name
     ORDER BY sales_cents DESC
   `).all().map((row) => ({
-    name: row.name,
-    orders: row.orders,
-    salesCents: row.sales_cents,
-    sales: money(row.sales_cents)
+    ...reportMoneyRow(row),
+    averageTicketCents: Math.round(Number(row.average_ticket_cents || 0)),
+    averageTicket: money(row.average_ticket_cents)
   }));
 
   const byDelivery = db.prepare(`
-    SELECT dm.name, COUNT(*) AS orders, COALESCE(SUM(o.total_cents), 0) AS sales_cents
+    SELECT dm.name, COUNT(*) AS orders, COALESCE(SUM(o.total_cents), 0) AS sales_cents,
+      COALESCE(AVG(o.total_cents), 0) AS average_ticket_cents
     FROM orders o
     JOIN delivery_methods dm ON dm.id = o.delivery_method_id
     WHERE o.status != 'Cancelado'
     GROUP BY dm.name
     ORDER BY orders DESC
   `).all().map((row) => ({
-    name: row.name,
-    orders: row.orders,
-    salesCents: row.sales_cents,
-    sales: money(row.sales_cents)
+    ...reportMoneyRow(row),
+    averageTicketCents: Math.round(Number(row.average_ticket_cents || 0)),
+    averageTicket: money(row.average_ticket_cents)
   }));
 
   const byDay = db.prepare(`
@@ -3888,8 +4178,8 @@ export function getReports() {
     LIMIT 14
   `).all().reverse().map((row) => ({
     day: row.day,
-    orders: row.orders,
-    salesCents: row.sales_cents,
+    orders: Number(row.orders || 0),
+    salesCents: Number(row.sales_cents || 0),
     sales: money(row.sales_cents)
   }));
 
@@ -3900,12 +4190,7 @@ export function getReports() {
     WHERE status != 'Cancelado' AND ${businessDateSql()} = ?
     GROUP BY ${businessHourSql()}
     ORDER BY name
-  `).all(todayDate).map((row) => ({
-    name: row.name,
-    orders: row.orders,
-    salesCents: row.sales_cents,
-    sales: money(row.sales_cents)
-  }));
+  `).all(todayDate).map(reportMoneyRow);
 
   const byCategory = db.prepare(`
     SELECT c.name, SUM(oi.quantity) AS orders, COALESCE(SUM(oi.line_total_cents), 0) AS sales_cents
@@ -3917,12 +4202,7 @@ export function getReports() {
     GROUP BY c.name
     ORDER BY sales_cents DESC
     LIMIT 8
-  `).all().map((row) => ({
-    name: row.name,
-    orders: row.orders,
-    salesCents: row.sales_cents,
-    sales: money(row.sales_cents)
-  }));
+  `).all().map(reportMoneyRow);
 
   const byCashier = db.prepare(`
     SELECT COALESCE(u.name, 'Sin usuario') AS name, COUNT(DISTINCT o.id) AS orders,
@@ -3934,32 +4214,137 @@ export function getReports() {
     GROUP BY COALESCE(u.name, 'Sin usuario')
     ORDER BY sales_cents DESC
     LIMIT 8
-  `).all().map((row) => ({
-    name: row.name,
-    orders: row.orders,
-    salesCents: row.sales_cents,
+  `).all().map(reportMoneyRow);
+
+  const statusFunnel = db.prepare(`
+    SELECT status AS name, COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales_cents
+    FROM orders
+    WHERE ${businessMonthSql()} = ?
+    GROUP BY status
+    ORDER BY CASE status
+      WHEN 'Nuevo' THEN 1
+      WHEN 'Aceptado' THEN 2
+      WHEN 'En preparacion' THEN 3
+      WHEN 'Listo' THEN 4
+      WHEN 'En camino' THEN 5
+      WHEN 'Entregado' THEN 6
+      WHEN 'Cancelado' THEN 7
+      ELSE 8
+    END
+  `).all(currentMonth).map(reportMoneyRow);
+
+  const hourExpr = `CAST(${businessHourSql()} AS INTEGER)`;
+  const byDayPart = db.prepare(`
+    SELECT CASE
+      WHEN ${hourExpr} BETWEEN 5 AND 10 THEN 'Manana'
+      WHEN ${hourExpr} BETWEEN 11 AND 13 THEN 'Almuerzo'
+      WHEN ${hourExpr} BETWEEN 14 AND 17 THEN 'Tarde'
+      WHEN ${hourExpr} BETWEEN 18 AND 22 THEN 'Noche'
+      ELSE 'Madrugada'
+    END AS name,
+    COUNT(*) AS orders, COALESCE(SUM(total_cents), 0) AS sales_cents
+    FROM orders
+    WHERE status != 'Cancelado'
+      AND ${businessDateSql()} >= date(?, '-29 day')
+    GROUP BY name
+    ORDER BY sales_cents DESC
+  `).all(todayDate).map(reportMoneyRow);
+
+  const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado'];
+  const hourlyHeatmap = db.prepare(`
+    SELECT strftime('%w', created_at, ${BUSINESS_SQL_TIME}) AS day_index,
+      CAST(${businessHourSql()} AS INTEGER) AS hour,
+      COUNT(*) AS orders,
+      COALESCE(SUM(total_cents), 0) AS sales_cents
+    FROM orders
+    WHERE status != 'Cancelado'
+      AND ${businessDateSql()} >= date(?, '-29 day')
+    GROUP BY day_index, hour
+    ORDER BY day_index, hour
+  `).all(todayDate).map((row) => ({
+    dayIndex: Number(row.day_index || 0),
+    dayName: dayNames[Number(row.day_index || 0)] || 'Dia',
+    hour: Number(row.hour || 0),
+    name: `${dayNames[Number(row.day_index || 0)] || 'Dia'} ${String(row.hour || 0).padStart(2, '0')}:00`,
+    orders: Number(row.orders || 0),
+    salesCents: Number(row.sales_cents || 0),
     sales: money(row.sales_cents)
   }));
 
+  const promotions = db.prepare(`
+    SELECT coupon_code AS name, COUNT(*) AS orders,
+      COALESCE(SUM(total_cents), 0) AS sales_cents,
+      COALESCE(SUM(discount_cents), 0) AS discount_cents
+    FROM orders
+    WHERE status != 'Cancelado' AND IFNULL(coupon_code, '') != ''
+    GROUP BY coupon_code
+    ORDER BY discount_cents DESC, orders DESC
+    LIMIT 10
+  `).all().map((row) => ({
+    name: row.name,
+    orders: Number(row.orders || 0),
+    salesCents: Number(row.sales_cents || 0),
+    sales: money(row.sales_cents),
+    discountCents: Number(row.discount_cents || 0),
+    discount: money(row.discount_cents)
+  }));
+
+  const operations = getOperationalMetrics();
+  const customers = getCustomerMetrics();
+  const modifiers = getModifierMetrics();
+  const inventoryAlerts = getInventoryAlertsForReports();
+  const profitability = getProfitabilityMetrics();
+  const monthCancellationRatePct = percent(monthStatusTotals.cancelled_orders, monthStatusTotals.total_orders);
+
   return {
-    today: { orders: today.orders, salesCents: today.sales, sales: money(today.sales) },
-    week: { orders: week.orders, salesCents: week.sales, sales: money(week.sales) },
-    month: { orders: month.orders, salesCents: month.sales, sales: money(month.sales) },
+    today: metricSummary(today),
+    week: metricSummary(week),
+    month: metricSummary(month),
     all: {
-      orders: all.orders,
-      salesCents: all.sales,
+      orders: Number(all.orders || 0),
+      salesCents: Number(all.sales || 0),
       sales: money(all.sales),
       averageTicketCents: Math.round(all.average_ticket),
       averageTicket: money(all.average_ticket)
     },
-    cancelledOrders: cancelled.total,
+    cancelledOrders: Number(cancelled.total || 0),
     topProducts,
     byPayment,
     byDelivery,
     byDay,
     byHour,
     byCategory,
-    byCashier
+    byCashier,
+    advanced: {
+      generatedAt: nowIso(),
+      businessDate: todayDate,
+      currentMonth,
+      previousMonth,
+      growth: {
+        weekSalesDeltaPct: percentChange(week.sales, previousWeek.sales),
+        weekOrdersDeltaPct: percentChange(week.orders, previousWeek.orders),
+        monthSalesDeltaPct: percentChange(month.sales, previousMonthSummary.sales),
+        monthOrdersDeltaPct: percentChange(month.orders, previousMonthSummary.orders),
+        previousWeek: metricSummary(previousWeek),
+        previousMonth: metricSummary(previousMonthSummary)
+      },
+      operations,
+      customers,
+      modifiers,
+      profitability,
+      inventoryAlerts,
+      statusFunnel,
+      byDayPart,
+      hourlyHeatmap,
+      promotions,
+      health: {
+        monthCancellationRatePct,
+        repeatCustomerRatePct: customers.repeatRatePct,
+        lowStockAlerts: inventoryAlerts.totalAlerts,
+        averageAcceptMinutes: operations.averageAcceptMinutes,
+        averagePrepMinutes: operations.averagePrepMinutes
+      }
+    }
   };
 }
 

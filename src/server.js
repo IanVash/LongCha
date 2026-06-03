@@ -480,6 +480,231 @@ function listBackups() {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+function csvCell(value) {
+  const text = String(value ?? '');
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function csvFromRows(headers, rows) {
+  return [
+    headers.map((header) => csvCell(header.label)).join(','),
+    ...rows.map((row) => headers.map((header) => csvCell(row[header.key])).join(','))
+  ].join('\r\n');
+}
+
+function sendCsv(res, fileName, headers, rows) {
+  return send(res, 200, csvFromRows(headers, rows), {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${fileName}"`
+  });
+}
+
+function reportExport(type = 'sales-by-day') {
+  const reports = getReports();
+  const advanced = reports.advanced || {};
+  const exporters = {
+    'sales-by-day': {
+      fileName: 'ventas-por-dia.csv',
+      headers: [
+        { key: 'day', label: 'Fecha' },
+        { key: 'orders', label: 'Pedidos' },
+        { key: 'salesCents', label: 'Ventas centavos' }
+      ],
+      rows: reports.byDay
+    },
+    'top-products': {
+      fileName: 'productos-top.csv',
+      headers: [
+        { key: 'name', label: 'Producto' },
+        { key: 'categoryName', label: 'Categoria' },
+        { key: 'quantity', label: 'Cantidad' },
+        { key: 'salesCents', label: 'Ventas centavos' }
+      ],
+      rows: reports.topProducts
+    },
+    categories: {
+      fileName: 'ventas-por-categoria.csv',
+      headers: [
+        { key: 'name', label: 'Categoria' },
+        { key: 'orders', label: 'Cantidad' },
+        { key: 'salesCents', label: 'Ventas centavos' }
+      ],
+      rows: reports.byCategory
+    },
+    payments: {
+      fileName: 'ventas-por-metodo-pago.csv',
+      headers: [
+        { key: 'name', label: 'Metodo' },
+        { key: 'orders', label: 'Pedidos' },
+        { key: 'salesCents', label: 'Ventas centavos' },
+        { key: 'averageTicketCents', label: 'Ticket promedio centavos' }
+      ],
+      rows: reports.byPayment
+    },
+    customers: {
+      fileName: 'mejores-clientes.csv',
+      headers: [
+        { key: 'name', label: 'Cliente' },
+        { key: 'phone', label: 'Telefono' },
+        { key: 'orders', label: 'Pedidos' },
+        { key: 'salesCents', label: 'Ventas centavos' },
+        { key: 'lastOrderAt', label: 'Ultimo pedido' }
+      ],
+      rows: advanced.customers?.topCustomers || []
+    },
+    profitability: {
+      fileName: 'rentabilidad-productos.csv',
+      headers: [
+        { key: 'productName', label: 'Producto' },
+        { key: 'categoryName', label: 'Categoria' },
+        { key: 'soldThisMonth', label: 'Vendidos mes' },
+        { key: 'priceCents', label: 'Precio centavos' },
+        { key: 'recipeCostCents', label: 'Costo receta centavos' },
+        { key: 'grossProfitCents', label: 'Utilidad centavos' },
+        { key: 'marginPct', label: 'Margen %' }
+      ],
+      rows: advanced.profitability?.leaders || []
+    }
+  };
+  return exporters[type] || exporters['sales-by-day'];
+}
+
+function productionChecklist(req) {
+  const backups = listBackups();
+  const latestBackup = backups[0] || null;
+  const latestBackupMs = latestBackup ? new Date(latestBackup.updatedAt).getTime() : 0;
+  const backupMaxAgeMs = Math.max(backupIntervalHours || 24, 1) * 60 * 60 * 1000 * 1.5;
+  const backupFresh = Boolean(latestBackupMs && Date.now() - latestBackupMs <= backupMaxAgeMs);
+  const users = listUsers();
+  const demoUsers = users.filter((user) => user.active && /@demo\.com$/i.test(user.email));
+  const business = getBusiness();
+  const checkout = getCheckoutOptions();
+  const failedPrintJobs = listPrintJobs({ status: 'failed', limit: 20 });
+  const notifications = listNotificationLogs(80);
+  const failedNotifications = notifications.filter((item) => item.status === 'failed');
+  const reports = getReports();
+  const checklist = [
+    {
+      id: 'node-production',
+      label: 'Modo produccion activo',
+      ok: process.env.NODE_ENV === 'production',
+      detail: process.env.NODE_ENV === 'production' ? 'NODE_ENV=production' : 'Configura NODE_ENV=production en Render.'
+    },
+    {
+      id: 'https',
+      label: 'HTTPS forzado',
+      ok: enforceHttps || isSecureRequest(req),
+      detail: enforceHttps ? 'ENFORCE_HTTPS=true' : 'Activa ENFORCE_HTTPS=true detras del proxy HTTPS.'
+    },
+    {
+      id: 'secure-cookie',
+      label: 'Cookie segura',
+      ok: process.env.NODE_ENV === 'production' || String(process.env.COOKIE_SECURE || '').toLowerCase() === 'true',
+      detail: 'Usa COOKIE_SECURE=true en produccion.'
+    },
+    {
+      id: 'session-rotation',
+      label: 'Rotacion de sesiones',
+      ok: sessionRotateMinutes > 0,
+      detail: `Rotacion cada ${sessionRotateMinutes || 0} min.`
+    },
+    {
+      id: 'rate-limit',
+      label: 'Rate limiting',
+      ok: rateLimitMax > 0 && loginRateLimitMax > 0 && mutationRateLimitMax > 0,
+      detail: `${rateLimitMax}/ventana general, ${loginRateLimitMax} login, ${mutationRateLimitMax} mutaciones.`
+    },
+    {
+      id: 'backup',
+      label: 'Backups recientes',
+      ok: backupFresh,
+      detail: latestBackup ? `Ultimo backup: ${latestBackup.updatedAt}` : 'Crea un backup inicial.'
+    },
+    {
+      id: 'demo-users',
+      label: 'Usuarios demo desactivados',
+      ok: demoUsers.length === 0,
+      detail: demoUsers.length ? `${demoUsers.length} usuario(s) demo activo(s).` : 'No hay usuarios demo activos.'
+    },
+    {
+      id: 'print-agent-token',
+      label: 'Token de impresion no demo',
+      ok: process.env.NODE_ENV !== 'production' || Boolean(process.env.PRINT_AGENT_TOKEN),
+      detail: process.env.PRINT_AGENT_TOKEN ? 'PRINT_AGENT_TOKEN configurado.' : 'Configura PRINT_AGENT_TOKEN en produccion.'
+    },
+    {
+      id: 'image-limit',
+      label: 'Limite formal de imagenes',
+      ok: maxImageBytes > 0 && maxImageBytes <= 5 * 1024 * 1024,
+      detail: `Maximo actual: ${Math.round(maxImageBytes / 1024 / 1024 * 10) / 10} MB.`
+    },
+    {
+      id: 'whatsapp',
+      label: 'WhatsApp del negocio',
+      ok: Boolean(String(business.whatsappPhone || '').replace(/\D/g, '')),
+      detail: business.whatsappPhone ? 'Numero configurado.' : 'Agrega WhatsApp para confirmaciones.'
+    }
+  ];
+  const alerts = [
+    !checkout.openState?.open ? {
+      severity: 'warning',
+      title: 'Pedidos pausados',
+      detail: checkout.openState?.message || 'El negocio no esta recibiendo pedidos.'
+    } : null,
+    !backupFresh ? {
+      severity: 'danger',
+      title: 'Backup pendiente',
+      detail: latestBackup ? 'El ultimo backup ya esta viejo.' : 'Todavia no hay backups creados.'
+    } : null,
+    failedPrintJobs.length ? {
+      severity: 'danger',
+      title: 'Impresion con fallos',
+      detail: `${failedPrintJobs.length} trabajo(s) fallidos recientes.`
+    } : null,
+    failedNotifications.length ? {
+      severity: 'warning',
+      title: 'Notificaciones fallidas',
+      detail: `${failedNotifications.length} intento(s) fallidos recientes.`
+    } : null,
+    reports.advanced?.inventoryAlerts?.totalAlerts ? {
+      severity: 'warning',
+      title: 'Inventario bajo',
+      detail: `${reports.advanced.inventoryAlerts.totalAlerts} producto(s) o insumo(s) requieren revision.`
+    } : null,
+    demoUsers.length ? {
+      severity: 'danger',
+      title: 'Usuarios demo activos',
+      detail: 'Desactiva credenciales demo antes de produccion.'
+    } : null
+  ].filter(Boolean);
+  return {
+    generatedAt: new Date().toISOString(),
+    appUrl: originFromRequest(req),
+    environment: {
+      nodeEnv: process.env.NODE_ENV || 'development',
+      enforceHttps,
+      trustProxy,
+      backupIntervalHours,
+      sessionRotateMinutes,
+      maxImageBytes,
+      dataDir,
+      backupDir
+    },
+    summary: {
+      ok: checklist.every((item) => item.ok) && alerts.every((alert) => alert.severity !== 'danger'),
+      passed: checklist.filter((item) => item.ok).length,
+      total: checklist.length,
+      alerts: alerts.length,
+      criticalAlerts: alerts.filter((alert) => alert.severity === 'danger').length
+    },
+    checklist,
+    alerts,
+    latestBackup,
+    failedPrintJobs,
+    failedNotifications: failedNotifications.slice(0, 12)
+  };
+}
+
 function scheduleBackups() {
   if (!backupIntervalHours || backupIntervalHours < 1) return;
   setInterval(() => {
@@ -543,6 +768,14 @@ function requireAuth(req, res = null) {
 
 function requirePermission(user, permission) {
   if (!userCan(user, permission)) throw new ValidationError('No tienes permisos para esta accion.', 403);
+}
+
+function userCanAny(user, permissions = []) {
+  return permissions.some((permission) => userCan(user, permission));
+}
+
+function requireAnyPermission(user, permissions = []) {
+  if (!userCanAny(user, permissions)) throw new ValidationError('No tienes permisos para esta accion.', 403);
 }
 
 function canChangeStatus(user, status) {
@@ -677,6 +910,41 @@ function moneyText(cents) {
   return `$${(Number(cents || 0) / 100).toFixed(2)}`;
 }
 
+function cleanTicketText(value) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7E]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function ticketTextWidth(printer = {}) {
+  const paperWidth = Number(printer.ticketWidthMm || 80);
+  const fontSize = Number(printer.fontSizePt || (paperWidth === 58 ? 12 : 13));
+  const isWindowsDriver = printer.connectionMode === 'system';
+  const baseWidth = isWindowsDriver
+    ? (paperWidth === 58 ? 24 : 32)
+    : (paperWidth === 58 ? 32 : 42);
+  const minimum = isWindowsDriver
+    ? (paperWidth === 58 ? 18 : 26)
+    : (paperWidth === 58 ? 24 : 32);
+  const penalty = Math.max(0, Math.round((fontSize - 12) * (isWindowsDriver ? 1.8 : 1.2)));
+  return Math.max(minimum, Math.min(baseWidth, baseWidth - penalty));
+}
+
+function ticketDate(value) {
+  return new Intl.DateTimeFormat('es-SV', {
+    timeZone: 'America/El_Salvador',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  }).format(new Date(value || Date.now()));
+}
+
 function orderModifierLines(item, includePrices = true) {
   const variants = Object.entries(item.variants || {}).map(([key, value]) => `${key}: ${value}`);
   const extras = (item.extras || []).map((extra) => {
@@ -688,70 +956,149 @@ function orderModifierLines(item, includePrices = true) {
   return [...variants, ...extras, ...notes].filter(Boolean);
 }
 
-function textLine(char = '-', width = 32) {
+function textLine(char = '-', width = 42) {
   return char.repeat(width);
 }
 
-function buildTicketText(order, { type = 'payment' } = {}) {
+function centerTicketText(value, width) {
+  const text = cleanTicketText(value).slice(0, width);
+  const left = Math.max(0, Math.floor((width - text.length) / 2));
+  return `${' '.repeat(left)}${text}`;
+}
+
+function wrapTicketText(value, width, indent = 0) {
+  const text = cleanTicketText(value);
+  if (!text) return [];
+  const prefix = ' '.repeat(indent);
+  const available = Math.max(8, width - indent);
+  const lines = [];
+  let current = '';
+
+  for (const word of text.split(' ')) {
+    if (!word) continue;
+    if (word.length > available) {
+      if (current) {
+        lines.push(`${prefix}${current}`);
+        current = '';
+      }
+      for (let index = 0; index < word.length; index += available) {
+        lines.push(`${prefix}${word.slice(index, index + available)}`);
+      }
+      continue;
+    }
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > available) {
+      lines.push(`${prefix}${current}`);
+      current = word;
+    } else {
+      current = next;
+    }
+  }
+
+  if (current) lines.push(`${prefix}${current}`);
+  return lines;
+}
+
+function pushWrappedTicketText(lines, value, width, indent = 0) {
+  lines.push(...wrapTicketText(value, width, indent));
+}
+
+function ticketAmountLines(label, amount, width) {
+  const left = cleanTicketText(label);
+  const right = cleanTicketText(amount);
+  if (!right) return wrapTicketText(left, width);
+  if (left.length + right.length + 1 <= width) {
+    return [`${left}${' '.repeat(width - left.length - right.length)}${right}`];
+  }
+  const leftWidth = Math.max(8, width - right.length - 1);
+  const lines = wrapTicketText(left, leftWidth);
+  const last = lines.pop() || '';
+  const gap = Math.max(1, width - last.length - right.length);
+  return [...lines, `${last}${' '.repeat(gap)}${right}`];
+}
+
+function pushTicketAmount(lines, label, amount, width) {
+  lines.push(...ticketAmountLines(label, amount, width));
+}
+
+function customerVisibleNotes(order) {
+  const notes = cleanTicketText(order.notes);
+  if (!notes || /^Pedido creado en kiosko de autoservicio\.?$/i.test(notes)) return '';
+  return notes;
+}
+
+function buildTicketText(order, { type = 'payment', printer = {} } = {}) {
   const business = getBusiness();
   const isKitchen = type === 'kitchen';
+  const width = ticketTextWidth(printer);
   const lines = [
-    isKitchen ? 'PEDIDO COCINA' : business.name,
-    `Pedido ${order.orderNumber}`,
-    new Date(order.createdAt || Date.now()).toLocaleString('es-SV'),
-    textLine(),
-    `Cliente: ${order.customer.name}`,
-    `Telefono: ${order.customer.phone}`,
-    order.tableLabel ? `Mesa/ref: ${order.tableLabel}` : '',
-    `Entrega: ${order.deliveryMethod.name}`,
-    isKitchen ? '' : `Pago: ${order.paymentMethod.name}`,
-    textLine()
-  ].filter(Boolean);
+    centerTicketText(isKitchen ? 'PEDIDO COCINA' : business.name, width),
+    centerTicketText(isKitchen ? `COMANDA ${order.orderNumber}` : `TICKET ${order.orderNumber}`, width),
+    centerTicketText(ticketDate(order.createdAt), width),
+    textLine('=', width)
+  ];
+
+  pushWrappedTicketText(lines, `Cliente: ${order.customer.name}`, width);
+  if (!isKitchen) pushWrappedTicketText(lines, `Telefono: ${order.customer.phone}`, width);
+  if (order.tableLabel) pushWrappedTicketText(lines, `Mesa/ref: ${order.tableLabel}`, width);
+  pushWrappedTicketText(lines, `Entrega: ${order.deliveryMethod.name}`, width);
+  if (!isKitchen) pushWrappedTicketText(lines, `Pago: ${order.paymentMethod.name}`, width);
+  lines.push(textLine('-', width));
 
   for (const item of order.items || []) {
-    lines.push(`${item.quantity} x ${item.productName}${isKitchen ? '' : ` ${moneyText(item.lineTotalCents)}`}`);
-    for (const modifier of orderModifierLines(item, !isKitchen)) lines.push(`  ${modifier}`);
+    if (isKitchen) {
+      pushWrappedTicketText(lines, `${item.quantity} x ${item.productName}`, width);
+    } else {
+      pushTicketAmount(lines, `${item.quantity} x ${item.productName}`, moneyText(item.lineTotalCents), width);
+    }
+    for (const modifier of orderModifierLines(item, !isKitchen)) {
+      pushWrappedTicketText(lines, `- ${modifier}`, width, 2);
+    }
     lines.push('');
   }
 
-  if (order.notes) {
-    lines.push(textLine(), 'Notas generales:', order.notes);
+  const visibleNotes = customerVisibleNotes(order);
+  if (visibleNotes) {
+    lines.push(textLine('-', width), 'Notas generales:');
+    pushWrappedTicketText(lines, visibleNotes, width, 2);
   }
 
   if (!isKitchen) {
-    lines.push(
-      textLine(),
-      `Subtotal: ${moneyText(order.subtotalCents)}`,
-      order.discountCents ? `Descuento: -${moneyText(order.discountCents)}` : '',
-      `Delivery: ${moneyText(order.deliveryFeeCents)}`,
-      `TOTAL: ${moneyText(order.totalCents)}`
-    );
+    lines.push(textLine('=', width));
+    pushTicketAmount(lines, 'Subtotal', moneyText(order.subtotalCents), width);
+    if (order.discountCents) pushTicketAmount(lines, 'Descuento', `-${moneyText(order.discountCents)}`, width);
+    pushTicketAmount(lines, 'Delivery', moneyText(order.deliveryFeeCents), width);
+    lines.push(textLine('-', width));
+    pushTicketAmount(lines, 'TOTAL', moneyText(order.totalCents), width);
   }
 
-  lines.push(textLine(), `Estado: ${order.status}`);
+  lines.push(textLine('=', width), centerTicketText(`Estado: ${order.status}`, width));
   return `${lines.filter((line) => line !== '').join('\n')}\n\n`;
 }
 
-function buildOrderNumberText(order) {
+function buildOrderNumberText(order, printer = {}) {
   const business = getBusiness();
+  const width = ticketTextWidth(printer);
   return [
-    business.name,
-    'NUMERO DE ORDEN',
+    centerTicketText(business.name, width),
+    centerTicketText('NUMERO DE ORDEN', width),
+    textLine('=', width),
     '',
-    order.orderNumber,
+    centerTicketText(order.orderNumber, width),
     '',
-    `Cliente: ${order.customer.name}`,
-    order.tableLabel ? `Mesa/ref: ${order.tableLabel}` : '',
-    new Date(order.createdAt || Date.now()).toLocaleString('es-SV'),
+    ...wrapTicketText(`Cliente: ${order.customer.name}`, width),
+    ...(order.tableLabel ? wrapTicketText(`Mesa/ref: ${order.tableLabel}`, width) : []),
+    centerTicketText(ticketDate(order.createdAt), width),
+    textLine('-', width),
     '',
-    'Conserva este numero para retirar tu pedido.',
+    ...wrapTicketText('Conserva este numero para retirar tu pedido.', width),
     ''
   ].filter(Boolean).join('\n');
 }
 
 function escposBase64(text) {
   return Buffer.concat([
-    Buffer.from([0x1b, 0x40]),
+    Buffer.from([0x1b, 0x40, 0x1b, 0x61, 0x00, 0x1b, 0x4d, 0x00, 0x1d, 0x21, 0x00]),
     Buffer.from(text, 'utf8'),
     Buffer.from('\n\n\n', 'utf8'),
     Buffer.from([0x1d, 0x56, 0x00])
@@ -834,11 +1181,11 @@ function isKioskOrder(order) {
 
 function buildPrintJobPayload(order, role, printer, business) {
   if (role === 'cocina') {
-    const plainText = buildTicketText(order, { type: 'kitchen' });
+    const plainText = buildTicketText(order, { type: 'kitchen', printer });
     return { title: `Cocina ${order.orderNumber}`, plainText, rawFormat: 'escpos', rawBase64: escposBase64(plainText) };
   }
   if (role === 'kiosk') {
-    const plainText = buildOrderNumberText(order);
+    const plainText = buildOrderNumberText(order, printer);
     return { title: `Numero ${order.orderNumber}`, plainText, rawFormat: 'escpos', rawBase64: escposBase64(plainText) };
   }
   if (role === 'etiquetas') {
@@ -853,7 +1200,7 @@ function buildPrintJobPayload(order, role, printer, business) {
       labels
     };
   }
-  const plainText = buildTicketText(order, { type: 'payment' });
+  const plainText = buildTicketText(order, { type: 'payment', printer });
   return { title: `Ticket ${order.orderNumber}`, plainText, rawFormat: 'escpos', rawBase64: escposBase64(plainText) };
 }
 
@@ -1388,13 +1735,20 @@ async function handleAdminApi(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  if (req.method === 'GET' && pathname === '/api/admin/reports/export.csv') {
+    requireAnyPermission(user, ['reports:export', 'reports:view']);
+    const exportData = reportExport(searchParams.get('type') || 'sales-by-day');
+    audit(req, 'reports.exported', 'report', searchParams.get('type') || 'sales-by-day', {}, user.id);
+    return sendCsv(res, exportData.fileName, exportData.headers, exportData.rows);
+  }
+
   if (req.method === 'GET' && pathname === '/api/admin/reports') {
     requirePermission(user, 'reports:view');
     return json(res, 200, getReports());
   }
 
   if (req.method === 'GET' && pathname === '/api/admin/accounting') {
-    if (!userCan(user, 'reports:view')) requirePermission(user, '*');
+    if (!userCanAny(user, ['accounting:view', 'cash:view', 'reports:view'])) requirePermission(user, '*');
     return json(res, 200, getAccounting());
   }
   if (req.method === 'POST' && pathname === '/api/admin/accounting/entries') {
@@ -1408,7 +1762,7 @@ async function handleAdminApi(req, res, url) {
     return json(res, 201, { entry });
   }
   if (req.method === 'POST' && pathname === '/api/admin/accounting/cash-openings') {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['cash:open', 'orders:update']);
     const cashRegister = saveCashOpening(await readJson(req), user.id);
     audit(req, 'accounting.cash_opened', 'cash_register_session', cashRegister.session?.id || '', {
       businessDate: cashRegister.businessDate,
@@ -1417,7 +1771,7 @@ async function handleAdminApi(req, res, url) {
     return json(res, 201, { cashRegister });
   }
   if (req.method === 'POST' && pathname === '/api/admin/accounting/cash-closings') {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['cash:close', 'orders:update']);
     const closing = saveCashClosing(await readJson(req), user.id);
     audit(req, 'accounting.cash_closed', 'cash_closing', closing.id, {
       businessDate: closing.businessDate,
@@ -1504,11 +1858,15 @@ async function handleAdminApi(req, res, url) {
   }
 
   if (req.method === 'GET' && pathname === '/api/admin/settings') {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['settings:view', 'settings:update']);
     return json(res, 200, { business: getBusiness(), options: getCheckoutOptions(), branches: listBranches() });
   }
+  if (req.method === 'GET' && pathname === '/api/admin/system-health') {
+    requireAnyPermission(user, ['settings:view', 'audit:view', 'reports:view']);
+    return json(res, 200, productionChecklist(req));
+  }
   if (req.method === 'GET' && pathname === '/api/admin/printers/detected') {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['settings:update']);
     const result = await detectConnectedPrinters();
     audit(req, 'settings.printers_detected', 'business', 1, {
       platform: result.platform,
@@ -1518,7 +1876,7 @@ async function handleAdminApi(req, res, url) {
     return json(res, 200, result);
   }
   if (req.method === 'GET' && pathname === '/api/admin/print-jobs') {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['settings:view', 'audit:view']);
     return json(res, 200, {
       jobs: listPrintJobs({
         status: searchParams.get('status') || '',
@@ -1527,18 +1885,18 @@ async function handleAdminApi(req, res, url) {
     });
   }
   if (req.method === 'PATCH' && pathname === '/api/admin/settings') {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['settings:update']);
     const business = updateBusiness(await readJson(req));
     audit(req, 'settings.business_updated', 'business', business.id, { name: business.name }, user.id);
     return json(res, 200, { business });
   }
 
   if (req.method === 'GET' && pathname === '/api/admin/users') {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['users:manage']);
     return json(res, 200, { users: listUsers(), roles: listRoles() });
   }
   if (req.method === 'POST' && pathname === '/api/admin/users') {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['users:manage']);
     const savedUser = saveUser(await readJson(req));
     audit(req, 'users.created', 'user', savedUser.id, { email: savedUser.email, roleName: savedUser.roleName }, user.id);
     return json(res, 201, { user: savedUser });
@@ -1546,7 +1904,7 @@ async function handleAdminApi(req, res, url) {
 
   const userMatch = pathname.match(/^\/api\/admin\/users\/(\d+)$/);
   if (req.method === 'PATCH' && userMatch) {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['users:manage']);
     const userId = Number(userMatch[1]);
     const body = await readJson(req);
     if (userId === user.id && body.active === false) {
@@ -1559,14 +1917,30 @@ async function handleAdminApi(req, res, url) {
 
   const roleMatch = pathname.match(/^\/api\/admin\/roles\/(\d+)$/);
   if (req.method === 'PATCH' && roleMatch) {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['roles:manage', 'users:manage']);
     const role = updateRole(Number(roleMatch[1]), await readJson(req));
     audit(req, 'roles.updated', 'role', role.id, { name: role.name, permissions: role.permissions }, user.id);
     return json(res, 200, { role });
   }
 
+  if (req.method === 'GET' && pathname === '/api/admin/audit/export.csv') {
+    requireAnyPermission(user, ['audit:view']);
+    const rows = listAuditLogs({ action: searchParams.get('action') || '', limit: 1000 });
+    audit(req, 'audit.exported', 'audit_log', '', { rows: rows.length }, user.id);
+    return sendCsv(res, 'auditoria.csv', [
+      { key: 'createdAt', label: 'Fecha' },
+      { key: 'userName', label: 'Usuario' },
+      { key: 'userEmail', label: 'Email' },
+      { key: 'action', label: 'Accion' },
+      { key: 'entityType', label: 'Entidad' },
+      { key: 'entityId', label: 'ID entidad' },
+      { key: 'ipAddress', label: 'IP' },
+      { key: 'userAgent', label: 'Navegador' }
+    ], rows);
+  }
+
   if (req.method === 'GET' && pathname === '/api/admin/audit') {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['audit:view']);
     return json(res, 200, {
       auditLogs: listAuditLogs({
         action: searchParams.get('action') || '',
@@ -1577,13 +1951,13 @@ async function handleAdminApi(req, res, url) {
   }
 
   if (req.method === 'GET' && pathname === '/api/admin/backups') {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['backups:view', 'audit:view']);
     return json(res, 200, { backups: listBackups(), notifications: listNotificationLogs() });
   }
 
   const backupDownloadMatch = pathname.match(/^\/api\/admin\/backups\/([^/]+)$/);
   if (req.method === 'GET' && backupDownloadMatch) {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['backups:download', 'backups:view']);
     const fileName = path.basename(backupDownloadMatch[1]);
     const backup = listBackups().find((item) => item.fileName === fileName);
     if (!backup) throw new ValidationError('Backup no encontrado.', 404);
@@ -1593,7 +1967,7 @@ async function handleAdminApi(req, res, url) {
   }
 
   if (req.method === 'POST' && pathname === '/api/admin/backups') {
-    requirePermission(user, '*');
+    requireAnyPermission(user, ['backups:create']);
     const backup = createBackup('manual');
     audit(req, 'system.backup_created', 'backup', backup.fileName, { bytes: backup.bytes, automatic: false }, user.id);
     return json(res, 201, { backup });

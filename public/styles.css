@@ -1606,6 +1606,74 @@ button {
   color: rgba(255, 255, 255, 0.82);
 }
 
+.system-alert-panel {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: grid;
+  grid-template-columns: minmax(240px, 0.55fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.system-alert-panel h2 {
+  margin: 4px 0;
+}
+
+.system-alert-panel p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.system-alert-panel.has-danger {
+  border-color: rgba(189, 45, 45, 0.28);
+}
+
+.system-alert-panel.has-warning {
+  border-color: rgba(194, 104, 38, 0.28);
+}
+
+.system-alert-panel.is-ok {
+  border-color: rgba(20, 110, 67, 0.22);
+}
+
+.system-alert-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.system-alert {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: #f9fbfa;
+  display: grid;
+  gap: 4px;
+}
+
+.system-alert span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.system-alert--danger {
+  background: #fff5f5;
+  border-color: rgba(189, 45, 45, 0.24);
+}
+
+.system-alert--warning {
+  background: #fff8f0;
+  border-color: rgba(194, 104, 38, 0.24);
+}
+
+.system-alert--ok {
+  background: #f3fbf7;
+  border-color: rgba(20, 110, 67, 0.2);
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.7fr);
@@ -1886,6 +1954,59 @@ button {
 
 .report-card--wide {
   grid-row: span 2;
+}
+
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.insight-grid div {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f9fbfa;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.insight-grid span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.insight-grid strong {
+  font-size: 1.18rem;
+}
+
+.report-heatmap {
+  display: grid;
+  grid-template-columns: 58px repeat(15, minmax(28px, 1fr));
+  gap: 5px;
+  margin-top: 14px;
+  overflow-x: auto;
+}
+
+.report-heatmap b,
+.report-heatmap strong {
+  color: var(--muted);
+  font-size: 0.74rem;
+  align-self: center;
+}
+
+.report-heatmap span {
+  min-width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: #14513c;
+  font-size: 0.72rem;
+  font-weight: 850;
+  background: #edf5ef;
 }
 
 .donut-wrap {
@@ -2451,6 +2572,69 @@ button {
 .settings-block h2 {
   margin: 0;
   font-size: 1.05rem;
+}
+
+.production-checklist header p {
+  margin: 4px 0 0;
+}
+
+.checklist-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.checklist-grid article {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  background: #f9fbfa;
+}
+
+.checklist-grid b {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #dde7e1;
+  color: var(--ink);
+  font-size: 0.78rem;
+}
+
+.checklist-grid strong,
+.checklist-grid span {
+  display: block;
+}
+
+.checklist-grid span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: 2px;
+}
+
+.checklist-grid .is-ok {
+  border-color: rgba(20, 110, 67, 0.2);
+  background: #f3fbf7;
+}
+
+.checklist-grid .is-ok b {
+  background: rgba(20, 110, 67, 0.14);
+  color: var(--brand);
+}
+
+.checklist-grid .is-pending {
+  border-color: rgba(194, 104, 38, 0.24);
+  background: #fff8f0;
+}
+
+.checklist-grid .is-pending b {
+  background: rgba(194, 104, 38, 0.14);
+  color: #8a4315;
 }
 
 .switch-row {
@@ -3962,7 +4146,10 @@ body[data-page="kiosk"] {
     background: #fff;
     color: #000;
     font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
-    font-size: 11px;
+    font-size: var(--ticket-font-size, 13pt);
+    font-weight: 700;
+    line-height: 1.18;
+    overflow-wrap: anywhere;
   }
 
   #ticketPrint[data-print-layout="labels-2x1"] {
@@ -4050,6 +4237,7 @@ body[data-page="kiosk"] {
   .product-admin-grid,
   .settings-layout,
   .dashboard-grid,
+  .system-alert-panel,
   .optional-layout,
   .inventory-layout,
   .accounting-layout,
@@ -4413,6 +4601,8 @@ body[data-page="kiosk"] {
   }
 
   .cash-summary-grid,
+  .system-alert-list,
+  .checklist-grid,
   .purchase-line,
   .mini-table > div {
     grid-template-columns: 1fr;

@@ -94,6 +94,59 @@ function plainText(job) {
   return String(job.payload?.plainText || Buffer.from(rawBuffer(job)).toString('utf8'));
 }
 
+const WINDOWS_THERMAL_PRINT_SCRIPT = `
+param(
+  [string]$TextPath,
+  [string]$PrinterName,
+  [int]$PaperWidthMm = 80,
+  [double]$FontSizePt = 13,
+  [string]$DocumentName = "Long Cha Ticket"
+)
+
+Add-Type -AssemblyName System.Drawing
+
+$text = [System.IO.File]::ReadAllText($TextPath, [System.Text.Encoding]::UTF8)
+$lines = @($text -split "\\r?\\n")
+$script:lineIndex = 0
+$paperWidth = [Math]::Max(210, [Math]::Round(($PaperWidthMm / 25.4) * 100))
+$estimatedHeight = [Math]::Max(600, [Math]::Min(3200, [Math]::Round((($lines.Count + 8) * ($FontSizePt / 72) * 100) * 1.28)))
+
+$document = New-Object System.Drawing.Printing.PrintDocument
+$document.DocumentName = $DocumentName
+$document.PrinterSettings.PrinterName = $PrinterName
+$document.DefaultPageSettings.PaperSize = New-Object System.Drawing.Printing.PaperSize("LongChaTicket", $paperWidth, $estimatedHeight)
+$document.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(4, 4, 4, 4)
+
+$font = New-Object System.Drawing.Font("Consolas", $FontSizePt, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Point)
+$brush = [System.Drawing.Brushes]::Black
+
+$document.add_PrintPage({
+  param($sender, $eventArgs)
+  $eventArgs.Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
+  $left = $eventArgs.MarginBounds.Left
+  $top = $eventArgs.MarginBounds.Top
+  $bottom = $eventArgs.MarginBounds.Bottom
+  $lineHeight = [Math]::Ceiling($font.GetHeight($eventArgs.Graphics) * 1.04)
+  $y = $top
+
+  while ($script:lineIndex -lt $lines.Count) {
+    if (($y + $lineHeight) -gt $bottom) {
+      $eventArgs.HasMorePages = $true
+      return
+    }
+    $eventArgs.Graphics.DrawString($lines[$script:lineIndex], $font, $brush, $left, $y)
+    $y += $lineHeight
+    $script:lineIndex += 1
+  }
+
+  $eventArgs.HasMorePages = $false
+})
+
+$document.Print()
+$font.Dispose()
+$document.Dispose()
+`;
+
 function printToNetwork(job) {
   const printer = job.printerConfig || {};
   const host = printer.networkHost;
@@ -123,16 +176,36 @@ async function printToWindowsPrinter(job) {
   if (!printerName) throw new Error(`El trabajo ${job.id} no tiene impresora instalada configurada.`);
   await mkdir(tempDir, { recursive: true });
   const filePath = path.join(tempDir, `job-${job.id}-${Date.now()}.txt`);
+  const scriptPath = path.join(tempDir, `print-${job.id}-${Date.now()}.ps1`);
   await writeFile(filePath, plainText(job), 'utf8');
-  const command = `Get-Content -LiteralPath '${psQuote(filePath)}' -Raw | Out-Printer -Name '${psQuote(printerName)}'`;
+  await writeFile(scriptPath, WINDOWS_THERMAL_PRINT_SCRIPT, 'utf8');
+  const paperWidth = String(job.printerConfig?.ticketWidthMm || 80);
+  const fontSize = String(job.printerConfig?.fontSizePt || (Number(paperWidth) === 58 ? 12 : 13));
   try {
-    await execFileAsync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command], {
+    await execFileAsync('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      scriptPath,
+      '-TextPath',
+      filePath,
+      '-PrinterName',
+      printerName,
+      '-PaperWidthMm',
+      paperWidth,
+      '-FontSizePt',
+      fontSize,
+      '-DocumentName',
+      job.payload?.title || `Long Cha ${job.orderNumber || job.id}`
+    ], {
       windowsHide: true,
       timeout: 20000,
       maxBuffer: 128 * 1024
     });
   } finally {
     await rm(filePath, { force: true }).catch(() => {});
+    await rm(scriptPath, { force: true }).catch(() => {});
   }
 }
 

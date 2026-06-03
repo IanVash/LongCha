@@ -13,6 +13,7 @@ const DEFAULT_PRINTER_CONFIG = {
       name: 'Caja',
       type: 'thermal',
       ticketWidthMm: 80,
+      fontSizePt: 13,
       connectionMode: 'browser',
       systemPrinterName: '',
       networkHost: '',
@@ -23,6 +24,7 @@ const DEFAULT_PRINTER_CONFIG = {
       name: 'Cocina',
       type: 'thermal',
       ticketWidthMm: 80,
+      fontSizePt: 13,
       connectionMode: 'browser',
       systemPrinterName: '',
       networkHost: '',
@@ -33,6 +35,7 @@ const DEFAULT_PRINTER_CONFIG = {
       name: 'Kiosko',
       type: 'thermal',
       ticketWidthMm: 80,
+      fontSizePt: 14,
       connectionMode: 'browser',
       systemPrinterName: '',
       networkHost: '',
@@ -1398,6 +1401,7 @@ function normalizeFrontendThermalPrinter(input, defaults, legacy = {}) {
     enabled: Boolean(config.enabled ?? legacy.enabled ?? defaults.enabled),
     type: 'thermal',
     ticketWidthMm: printerTicketWidth(config.ticketWidthMm ?? legacy.ticketWidthMm, defaults.ticketWidthMm),
+    fontSizePt: printerRange(config.fontSizePt ?? legacy.fontSizePt, 9, 18, defaults.fontSizePt),
     connectionMode: printerConnectionMode(config.connectionMode ?? legacy.connectionMode, defaults.connectionMode),
     systemPrinterName: String(config.systemPrinterName ?? legacy.systemPrinterName ?? defaults.systemPrinterName ?? ''),
     networkHost: String(config.networkHost ?? legacy.networkHost ?? defaults.networkHost ?? ''),
@@ -1488,6 +1492,7 @@ function preparePrintTarget(layout, config = {}) {
   if (!target) return null;
   target.dataset.printLayout = layout;
   target.style.setProperty('--ticket-width', `${Number(config.ticketWidthMm || 80)}mm`);
+  target.style.setProperty('--ticket-font-size', `${Number(config.fontSizePt || 13)}pt`);
   target.style.setProperty('--label-width', `${Number(config.labelWidthIn || 2)}in`);
   target.style.setProperty('--label-height', `${Number(config.labelHeightIn || 1)}in`);
   target.innerHTML = '';
