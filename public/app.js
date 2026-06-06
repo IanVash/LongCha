@@ -124,7 +124,13 @@ function cartTotalCents(cart = getCart()) {
 }
 
 function normalizedName(value) {
-  return String(value || '').trim().toLowerCase();
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9%]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function publicOptionalGroups(product) {
@@ -143,6 +149,21 @@ function hasAddonGroup(product) {
 
 function publicExtras(product) {
   return hasAddonGroup(product) ? [] : (product.extras || []);
+}
+
+function shouldPreselectCustomization(groupName, optionName) {
+  const group = normalizedName(groupName);
+  const option = normalizedName(optionName);
+  const isSugar = group.includes('azucar') || group.includes('sugar');
+  const isIce = group.includes('hielo') || group.includes('ice');
+  const isMilk = group.includes('leche') || group.includes('milk');
+  const isAddon = ['boba', 'topping', 'toppings', 'extra', 'extras', 'adicional', 'adicionales', 'agregado', 'agregados'].some((word) => group.includes(word));
+
+  if (isSugar) return option.includes('100');
+  if (isIce) return option.includes('normal') || option.includes('regular');
+  if (isMilk) return option.includes('entera') || option.includes('whole') || option.includes('standard');
+  if (isAddon) return option.includes('tapioca') || option.includes('perla');
+  return false;
 }
 
 function updateCartItemQuantity(cartId, nextQuantity) {
@@ -489,13 +510,14 @@ function openProductDialog(product, options = {}) {
 }
 
 function variantGroupControl(variant, index) {
+  const defaultIndex = variant.options.findIndex((option) => shouldPreselectCustomization(variant.name, option));
   return `
     <fieldset class="customizer-group">
       <legend>${escapeHtml(variant.name)}${variant.required ? ' *' : ''}</legend>
       <div class="customizer-option-grid">
         ${variant.options.map((option, optionIndex) => `
           <label class="customizer-option-tile">
-            <input type="radio" name="variant:${escapeHtml(variant.name)}" value="${escapeHtml(option)}" ${variant.required ? 'required' : ''} ${optionIndex === 0 ? 'checked' : ''}>
+            <input type="radio" name="variant:${escapeHtml(variant.name)}" value="${escapeHtml(option)}" ${variant.required ? 'required' : ''} ${(defaultIndex >= 0 ? optionIndex === defaultIndex : optionIndex === 0) ? 'checked' : ''}>
             <span class="customizer-option-icon">${optionIcon(variant.name, option)}</span>
             <span class="customizer-option-label">${escapeHtml(option)}</span>
           </label>
@@ -507,13 +529,14 @@ function variantGroupControl(variant, index) {
 
 function optionalGroupControl(group) {
   const inputType = group.maxSelect === 1 ? 'radio' : 'checkbox';
+  const defaultIndex = group.options.findIndex((option) => shouldPreselectCustomization(group.name, option.name));
   return `
     <fieldset class="customizer-group">
       <legend>${escapeHtml(group.name)}${group.required ? ' *' : ''}</legend>
       <div class="customizer-option-grid">
       ${group.options.map((option, optionIndex) => `
         <label class="customizer-option-tile">
-          <input type="${inputType}" name="optional:${group.id}" value="${option.id}" ${group.required && inputType === 'radio' ? 'required' : ''} ${group.required && inputType === 'radio' && optionIndex === 0 ? 'checked' : ''} ${inputType === 'checkbox' ? `data-max-select="${group.maxSelect || 0}"` : ''}>
+          <input type="${inputType}" name="optional:${group.id}" value="${option.id}" ${group.required && inputType === 'radio' ? 'required' : ''} ${(inputType === 'radio' ? (defaultIndex >= 0 ? optionIndex === defaultIndex : group.required && optionIndex === 0) : optionIndex === defaultIndex) ? 'checked' : ''} ${inputType === 'checkbox' ? `data-max-select="${group.maxSelect || 0}"` : ''}>
           <span class="customizer-option-icon">${optionIcon(group.name, option.name)}</span>
           <span class="customizer-option-label">${escapeHtml(option.name)}</span>
           ${option.priceCents ? `<span class="customizer-option-price">+${money(option.priceCents)}</span>` : ''}
@@ -528,7 +551,7 @@ function optionalGroupControl(group) {
 function extraOptionTile(extra) {
   return `
     <label class="customizer-option-tile">
-      <input type="checkbox" name="extra" value="${extra.id}">
+      <input type="checkbox" name="extra" value="${extra.id}" ${shouldPreselectCustomization('extras', extra.name) ? 'checked' : ''}>
       <span class="customizer-option-icon">${optionIcon('extras', extra.name)}</span>
       <span class="customizer-option-label">${escapeHtml(extra.name)}</span>
       <span class="customizer-option-price">+${money(extra.priceCents)}</span>

@@ -3788,12 +3788,15 @@ body[data-page="kiosk"] {
 }
 
 .kiosk-details-dialog {
-  width: min(920px, calc(100% - 24px));
+  width: min(1080px, calc(100% - 18px));
+  max-height: min(96vh, 980px);
 }
 
 .kiosk-details {
-  max-height: min(92vh, 900px);
+  max-height: min(96vh, 980px);
   overflow-y: auto;
+  gap: 10px;
+  padding: 16px 18px;
 }
 
 .kiosk-details__grid {
@@ -3822,7 +3825,7 @@ body[data-page="kiosk"] {
   border: 1px solid rgba(20, 110, 67, 0.22);
   border-radius: var(--radius);
   background: #fffaf0;
-  padding: 12px;
+  padding: 10px 12px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
@@ -3847,7 +3850,7 @@ body[data-page="kiosk"] {
   gap: 14px;
   align-items: center;
   border-top: 1px solid var(--line);
-  padding-top: 12px;
+  padding-top: 10px;
 }
 
 .kiosk-details__cart-head strong:last-child {
@@ -3857,8 +3860,8 @@ body[data-page="kiosk"] {
 
 .kiosk-details__lines {
   display: grid;
-  gap: 10px;
-  max-height: min(30vh, 260px);
+  gap: 7px;
+  max-height: min(18vh, 180px);
   overflow-y: auto;
   padding-right: 3px;
 }
@@ -3867,36 +3870,36 @@ body[data-page="kiosk"] {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #fffaf0;
-  padding: 7px;
+  padding: 6px;
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .kiosk-keyboard__row {
   display: flex;
   justify-content: center;
-  gap: 4px;
+  gap: 3px;
 }
 
 .kiosk-key {
-  min-width: 36px;
-  min-height: 36px;
+  min-width: 34px;
+  min-height: 32px;
   border: 1px solid rgba(20, 110, 67, 0.18);
   border-radius: 7px;
   background: #fff;
   color: var(--ink);
   font-weight: 900;
-  font-size: 0.86rem;
-  box-shadow: 0 4px 10px rgba(20, 20, 20, 0.06);
+  font-size: 0.82rem;
+  box-shadow: 0 3px 8px rgba(20, 20, 20, 0.05);
 }
 
 .kiosk-key[data-kiosk-key="Espacio"] {
-  min-width: 128px;
+  min-width: 118px;
 }
 
 .kiosk-key[data-kiosk-key="Borrar"],
 .kiosk-key[data-kiosk-key="Limpiar"] {
-  min-width: 72px;
+  min-width: 68px;
 }
 
 .kiosk-key:active {
