@@ -53,7 +53,7 @@ param(
   [string]$TextPath,
   [string]$PrinterName,
   [int]$PaperWidthMm = 80,
-  [double]$FontSizePt = 13,
+  [double]$FontSizePt = 10.5,
   [string]$DocumentName = "Long Cha Ticket"
 )
 
@@ -62,16 +62,19 @@ Add-Type -AssemblyName System.Drawing
 $text = [System.IO.File]::ReadAllText($TextPath, [System.Text.Encoding]::UTF8)
 $lines = @($text -split "\\r?\\n")
 $script:lineIndex = 0
+$effectiveFontSize = [Math]::Max(8.5, [Math]::Min(10.5, $FontSizePt))
 $paperWidth = [Math]::Max(210, [Math]::Round(($PaperWidthMm / 25.4) * 100))
-$estimatedHeight = [Math]::Max(600, [Math]::Min(3200, [Math]::Round((($lines.Count + 8) * ($FontSizePt / 72) * 100) * 1.28)))
+$estimatedHeight = [Math]::Max(260, [Math]::Min(1800, [Math]::Round((($lines.Count + 4) * (($effectiveFontSize + 2) / 72) * 100) + 28)))
 
 $document = New-Object System.Drawing.Printing.PrintDocument
 $document.DocumentName = $DocumentName
 $document.PrinterSettings.PrinterName = $PrinterName
 $document.DefaultPageSettings.PaperSize = New-Object System.Drawing.Printing.PaperSize("LongChaTicket", $paperWidth, $estimatedHeight)
-$document.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(4, 4, 4, 4)
+$document.DefaultPageSettings.Landscape = $false
+$document.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(2, 2, 2, 2)
+$document.OriginAtMargins = $true
 
-$font = New-Object System.Drawing.Font("Consolas", $FontSizePt, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Point)
+$font = New-Object System.Drawing.Font("Consolas", $effectiveFontSize, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
 $brush = [System.Drawing.Brushes]::Black
 
 $document.add_PrintPage({
@@ -80,7 +83,7 @@ $document.add_PrintPage({
   $left = $eventArgs.MarginBounds.Left
   $top = $eventArgs.MarginBounds.Top
   $bottom = $eventArgs.MarginBounds.Bottom
-  $lineHeight = [Math]::Ceiling($font.GetHeight($eventArgs.Graphics) * 1.04)
+  $lineHeight = [Math]::Ceiling($font.GetHeight($eventArgs.Graphics) * 0.98)
   $y = $top
 
   while ($script:lineIndex -lt $lines.Count) {
@@ -134,7 +137,8 @@ async function printToWindowsPrinter(job) {
   await writeFile(filePath, plainText(job), 'utf8');
   await writeFile(scriptPath, WINDOWS_THERMAL_PRINT_SCRIPT, 'utf8');
   const paperWidth = String(job.printerConfig?.ticketWidthMm || 80);
-  const fontSize = String(job.printerConfig?.fontSizePt || (Number(paperWidth) === 58 ? 12 : 13));
+  const configuredFontSize = Number(job.printerConfig?.fontSizePt || (Number(paperWidth) === 58 ? 10.5 : 10.5));
+  const fontSize = String(Math.max(8.5, Math.min(10.5, configuredFontSize)));
   try {
     await execFileAsync('powershell.exe', [
       '-NoProfile',

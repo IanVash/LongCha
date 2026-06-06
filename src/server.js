@@ -921,16 +921,9 @@ function cleanTicketText(value) {
 
 function ticketTextWidth(printer = {}) {
   const paperWidth = Number(printer.ticketWidthMm || 80);
-  const fontSize = Number(printer.fontSizePt || (paperWidth === 58 ? 12 : 13));
   const isWindowsDriver = printer.connectionMode === 'system';
-  const baseWidth = isWindowsDriver
-    ? (paperWidth === 58 ? 24 : 32)
-    : (paperWidth === 58 ? 32 : 42);
-  const minimum = isWindowsDriver
-    ? (paperWidth === 58 ? 18 : 26)
-    : (paperWidth === 58 ? 24 : 32);
-  const penalty = Math.max(0, Math.round((fontSize - 12) * (isWindowsDriver ? 1.8 : 1.2)));
-  return Math.max(minimum, Math.min(baseWidth, baseWidth - penalty));
+  if (paperWidth === 58) return isWindowsDriver ? 31 : 32;
+  return isWindowsDriver ? 38 : 42;
 }
 
 function ticketDate(value) {

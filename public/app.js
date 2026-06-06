@@ -1178,7 +1178,7 @@ function openKioskDetails(state) {
     return;
   }
   if (!state.deliveryMethodId || !state.serviceMode) {
-    showToast('Selecciona si es para llevar o comer aqui.');
+    showToast('Selecciona el tipo de pedido.');
     showKioskStart(state);
     return;
   }
@@ -1329,7 +1329,7 @@ function openKioskConfirm(state) {
     return;
   }
   if (!state.deliveryMethodId || !state.serviceMode) {
-    showToast('Selecciona si es para llevar o comer aqui.');
+    showToast('Selecciona el tipo de pedido.');
     showKioskStart(state);
     return;
   }
@@ -1700,7 +1700,7 @@ async function submitKioskOrder(state) {
     return false;
   }
   if (!state.deliveryMethodId || !state.serviceMode) {
-    showToast('Selecciona si es para llevar o comer aqui.');
+    showToast('Selecciona el tipo de pedido.');
     showKioskStart(state);
     return false;
   }
